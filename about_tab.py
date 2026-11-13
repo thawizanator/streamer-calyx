@@ -262,13 +262,18 @@ class AboutTab(QWidget):
 
     def _open_ledger(self):
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        ledger_path = os.path.join(script_dir, "ledger", "index.html")
-        if not os.path.exists(ledger_path):
-            ledger_path = os.path.join(script_dir, "ledger", "ledger_standalone.html")
-        if os.path.exists(ledger_path):
-            webbrowser.open(ledger_path)
-        else:
-            webbrowser.open(f"https://github.com/{GITHUB_REPO}/releases")
+        candidate_paths = [
+            os.path.join(script_dir, "ledger", "index.html"),
+            os.path.join(script_dir, "ledger", "ledger_standalone.html"),
+            os.path.join(script_dir, "StreamerCalyx_Ledger.html"),
+            os.path.join(os.path.dirname(script_dir), "StreamerCalyx_Ledger.html"),
+            os.path.join(os.path.expanduser("~"), "Desktop", "StreamerCalyx_Ledger.html"),
+        ]
+        for p in candidate_paths:
+            if os.path.exists(p):
+                webbrowser.open(p)
+                return
+        webbrowser.open(f"https://github.com/{GITHUB_REPO}/releases")
 
     def refresh_theme_labels(self, effective):
         pass
