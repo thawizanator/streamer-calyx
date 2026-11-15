@@ -6,7 +6,7 @@ Unicode True
 SetCompressor /SOLID lzma
 
 !define PRODUCT_NAME "Streamer Calyx"
-!define PRODUCT_VERSION "3.0.0"
+!define PRODUCT_VERSION "3.0.1"
 !define PRODUCT_PUBLISHER "ThaWizanator"
 !define PRODUCT_WEB_SITE "https://github.com/thawizanator/streamer-calyx"
 !define PRODUCT_DIR_REGKEY "Software\Microsoft\Windows\CurrentVersion\App Paths\StreamerCalyx.exe"

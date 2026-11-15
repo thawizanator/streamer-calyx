@@ -934,6 +934,7 @@ class RedBorderOverlay(QMainWindow):
 
         if hasattr(self, "_bound_activation_hotkey") and self._bound_activation_hotkey:
             try:
+                import keyboard
                 keyboard.remove_hotkey(self._bound_activation_hotkey)
             except Exception:
                 pass
@@ -941,6 +942,7 @@ class RedBorderOverlay(QMainWindow):
 
         if self.primary_hotkey_enabled and self.activation_hotkey:
             try:
+                import keyboard
                 keyboard.add_hotkey(self.activation_hotkey, lambda: self.signaler.trigger.emit(0))
                 self._bound_activation_hotkey = self.activation_hotkey
                 log_debug("HOTKEY", f"Primary activation hotkey bound: '{self.activation_hotkey}'")
@@ -971,6 +973,7 @@ class RedBorderOverlay(QMainWindow):
             try:
                 raw_hk = m.get("hotkey", "")
                 if raw_hk:
+                    import keyboard
                     keyboard.remove_hotkey(raw_hk)
             except Exception:
                 pass
@@ -981,6 +984,7 @@ class RedBorderOverlay(QMainWindow):
                 norm_hk = normalize_hotkey(hk)
                 m["hotkey"] = norm_hk
                 try:
+                    import keyboard
                     keyboard.add_hotkey(norm_hk, lambda idx=i: self.macro_signaler.trigger.emit(idx))
                 except Exception as e:
                     print(f"Warning: Could not bind macro hotkey '{norm_hk}': {e}")
@@ -1433,7 +1437,11 @@ class RedBorderOverlay(QMainWindow):
                 self.input_manager.shutdown()
             except Exception:
                 pass
-        keyboard.unhook_all()
+        try:
+            import keyboard
+            keyboard.unhook_all()
+        except Exception:
+            pass
         self.tray_icon.hide()
         if hasattr(self, "settings_window") and self.settings_window:
             if hasattr(self.settings_window, "tab_director") and self.settings_window.tab_director.panel_window:

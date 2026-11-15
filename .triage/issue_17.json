@@ -1,0 +1,17 @@
+{
+  "issue_number": 17,
+  "issue_url": "https://github.com/thawizanator/streamer-calyx/issues/17",
+  "title": "nameerror crash alert",
+  "urgency_estimate": "Critical / Blocker",
+  "component": "app update",
+  "author": "thawizanator (250346821250056192)",
+  "source": "discord",
+  "is_feature_request": false,
+  "description": "when updating the app and when clicking restart the app when it says it needs to restart it threw this crash",
+  "steps": "open calyx\nclick on system diagnostics and settings\nclick on check for updates\nfollow prompts to update\nclick on restart app when it prompts",
+  "diagnostics": {},
+  "logs": "📷 User attached screenshot: image.png\nURL: https://cdn.discordapp.com/ephemeral-attachments/1562566562047860839/1570652428846502046/image.png?ex=6af7df90&is=6af68e10&hm=8107ec774c222940f643eee25a095b719684fc73347aef356ff5365e31ead031&",
+  "ai_diagnosis": "Report filed for component **app update**. Logs have been attached and security-sanitized for maintainer review.",
+  "created_at": "2026-11-12T22:15:38.705417",
+  "status": "resolved_in_v3.0.1"
+}
