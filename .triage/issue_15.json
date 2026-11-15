@@ -1,0 +1,17 @@
+{
+  "issue_number": 15,
+  "issue_url": "https://github.com/thawizanator/streamer-calyx/issues/15",
+  "title": "Elements aligned to the right to far, visual bug",
+  "urgency_estimate": "Medium / Moderate",
+  "component": "Auto Clips & Stream Markers",
+  "author": "thawizanator (250346821250056192)",
+  "source": "discord",
+  "is_feature_request": false,
+  "description": "The elements on this tab seem to be pushed off to the right side to far, so mainly a visual bug nothing with functionality",
+  "steps": "1.) open calyx\n2.) click on Auto Clip & Stream Markers",
+  "diagnostics": {},
+  "logs": "📷 User attached screenshot: image.png\nURL: https://cdn.discordapp.com/ephemeral-attachments/1562566562047860839/1570644916323745842/image.png?ex=6af7d891&is=6af68711&hm=71188c547cbda1b9c6248eb232c4fb576a298a3b194aedb3ba065947947b5485&",
+  "ai_diagnosis": "Report filed for component **Auto Clips & Stream Markers**. Logs have been attached and security-sanitized for maintainer review.",
+  "created_at": "2026-11-12T21:44:11.746748",
+  "status": "pending_solution"
+}

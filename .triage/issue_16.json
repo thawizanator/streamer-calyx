@@ -1,0 +1,17 @@
+{
+  "issue_number": 16,
+  "issue_url": "https://github.com/thawizanator/streamer-calyx/issues/16",
+  "title": "Overlapping elements",
+  "urgency_estimate": "Medium / Moderate",
+  "component": "Logs & Diagnostics",
+  "author": "thawizanator (250346821250056192)",
+  "source": "discord",
+  "is_feature_request": false,
+  "description": "on the top bar-ish the Active Log File: drop down is under the Refresh Button and Copy  Log Button, another visual bug, not really a functional bug if you pay attention and see the bug and know where to click and stuff",
+  "steps": "open calyx\nclick on the Logs & Diagnostics Suite Tab",
+  "diagnostics": {},
+  "logs": "📷 User attached screenshot: image.png\nURL: https://cdn.discordapp.com/ephemeral-attachments/1562566562047860839/1570650772356468837/image.png?ex=6af7de05&is=6af68c85&hm=f2c39c925b40434465301fd2bdd4a81b8d4c766c9bc511e6c8f4b728a2ec32b8&",
+  "ai_diagnosis": "Report filed for component **Logs & Diagnostics**. Logs have been attached and security-sanitized for maintainer review.",
+  "created_at": "2026-11-12T22:07:25.557926",
+  "status": "pending_solution"
+}
