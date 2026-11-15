@@ -68,46 +68,64 @@ class SoundboardLANServer(QObject):
         """Stops server and closes all active client connections."""
         self._running = False
         if self.server:
-            self.server.close()
+            try:
+                self.server.blockSignals(True)
+                self.server.close()
+                self.server.deleteLater()
+            except Exception:
+                pass
             self.server = None
         for client in list(self.clients):
             try:
+                client.blockSignals(True)
                 client.close()
+                client.deleteLater()
             except Exception:
                 pass
         self.clients.clear()
         log_debug("LAN_SOUND_SERVER", "Soundboard LAN Bridge stopped.")
 
     def is_listening(self) -> bool:
-        return self._running and self.server is not None and self.server.isListening()
+        try:
+            return self._running and self.server is not None and self.server.isListening()
+        except (RuntimeError, Exception):
+            return False
 
     def _on_new_connection(self):
-        if not self.server:
-            return
-        socket = self.server.nextPendingConnection()
-        if not socket:
-            return
+        try:
+            if not getattr(self, "_running", False) or not self.server:
+                return
+            socket = self.server.nextPendingConnection()
+            if not socket:
+                return
 
-        peer_addr = f"{socket.peerAddress().toString()}:{socket.peerPort()}"
-        log_debug("LAN_SOUND_SERVER", f"LAN Director connected: {peer_addr}")
-        self.clients.append(socket)
-        socket.textMessageReceived.connect(lambda msg, s=socket: self._on_message_received(s, msg))
-        socket.disconnected.connect(lambda s=socket, addr=peer_addr: self._on_socket_disconnected(s, addr))
+            peer_addr = f"{socket.peerAddress().toString()}:{socket.peerPort()}"
+            log_debug("LAN_SOUND_SERVER", f"LAN Director connected: {peer_addr}")
+            self.clients.append(socket)
+            socket.textMessageReceived.connect(lambda msg, s=socket: self._on_message_received(s, msg))
+            socket.disconnected.connect(lambda s=socket, addr=peer_addr: self._on_socket_disconnected(s, addr))
 
-        # Send initial full state immediately upon connection
-        init_payload = {
-            "type": "INIT_STATE",
-            "clips": [c.to_dict() for c in getattr(self.engine, "clips", [])] if self.engine else [],
-            "active_clip_ids": [item["clip_id"] for item in getattr(self.engine, "active_players", [])] if self.engine else []
-        }
-        socket.sendTextMessage(json.dumps(init_payload))
-        self.client_connected.emit(peer_addr)
+            # Send initial full state immediately upon connection
+            init_payload = {
+                "type": "INIT_STATE",
+                "clips": [c.to_dict() for c in getattr(self.engine, "clips", [])] if self.engine else [],
+                "active_clip_ids": [item["clip_id"] for item in getattr(self.engine, "active_players", [])] if self.engine else []
+            }
+            socket.sendTextMessage(json.dumps(init_payload))
+            self.client_connected.emit(peer_addr)
+        except (RuntimeError, Exception) as e:
+            log_debug("LAN_SOUND_SERVER", f"Exception in _on_new_connection: {e}")
 
     def _on_socket_disconnected(self, socket: QWebSocket, peer_addr: str):
-        if socket in self.clients:
-            self.clients.remove(socket)
-        log_debug("LAN_SOUND_SERVER", f"LAN Director disconnected: {peer_addr}")
-        self.client_disconnected.emit(peer_addr)
+        try:
+            if not getattr(self, "_running", False):
+                return
+            if socket in self.clients:
+                self.clients.remove(socket)
+            log_debug("LAN_SOUND_SERVER", f"LAN Director disconnected: {peer_addr}")
+            self.client_disconnected.emit(peer_addr)
+        except (RuntimeError, Exception):
+            pass
 
     def _on_message_received(self, socket: QWebSocket, message: str):
         try:
@@ -266,29 +284,40 @@ class SoundboardLANClient(QObject):
 
     def disconnect_client(self):
         self._should_reconnect = False
-        self._reconnect_timer.stop()
+        try:
+            self._reconnect_timer.stop()
+        except Exception:
+            pass
         if self.ws:
             try:
+                self.ws.blockSignals(True)
                 self.ws.close()
+                self.ws.deleteLater()
             except Exception:
                 pass
             self.ws = None
         self._is_connected = False
 
     def _on_ws_connected(self):
-        self._is_connected = True
-        self._reconnect_timer.stop()
-        log_debug("LAN_SOUND_CLIENT", "Connected to Streamer Soundboard LAN Bridge!")
-        self.connected.emit()
-        self.connection_status_changed.emit(True, "🟢 Connected to Streamer Soundboard")
+        try:
+            self._is_connected = True
+            self._reconnect_timer.stop()
+            log_debug("LAN_SOUND_CLIENT", "Connected to Streamer Soundboard LAN Bridge!")
+            self.connected.emit()
+            self.connection_status_changed.emit(True, "🟢 Connected to Streamer Soundboard")
+        except (RuntimeError, Exception):
+            pass
 
     def _on_ws_disconnected(self):
-        self._is_connected = False
-        log_debug("LAN_SOUND_CLIENT", "Disconnected from Streamer Soundboard LAN Bridge.")
-        self.disconnected.emit()
-        self.connection_status_changed.emit(False, "🔴 Soundboard Disconnected")
-        if self._should_reconnect and not self._reconnect_timer.isActive():
-            self._reconnect_timer.start()
+        try:
+            self._is_connected = False
+            log_debug("LAN_SOUND_CLIENT", "Disconnected from Streamer Soundboard LAN Bridge.")
+            self.disconnected.emit()
+            self.connection_status_changed.emit(False, "🔴 Soundboard Disconnected")
+            if self._should_reconnect and not self._reconnect_timer.isActive():
+                self._reconnect_timer.start()
+        except (RuntimeError, Exception):
+            pass
 
     def _try_reconnect(self):
         if not self._is_connected and self._should_reconnect:

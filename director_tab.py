@@ -3372,11 +3372,33 @@ class DirectorTab(QWidget):
 
         self._update_slobs_status_ui()
 
-    def closeEvent(self, event):
-        self._stop_host_p2p()
-        if self.client_webrtc:
-            self.client_webrtc.stop_session()
+    def shutdown(self):
+        """Cleanly shuts down all networking, servers, and background threads."""
+        try:
+            self._stop_host_p2p()
+        except Exception:
+            pass
+        if getattr(self, "client_webrtc", None):
+            try:
+                self.client_webrtc.stop_session()
+            except Exception:
+                pass
             self.client_webrtc = None
+        if getattr(self, "soundboard_lan_server", None):
+            try:
+                self.soundboard_lan_server.stop()
+            except Exception:
+                pass
+            self.soundboard_lan_server = None
+        if getattr(self, "soundboard_lan_client", None):
+            try:
+                self.soundboard_lan_client.disconnect_client()
+            except Exception:
+                pass
+            self.soundboard_lan_client = None
+
+    def closeEvent(self, event):
+        self.shutdown()
         super().closeEvent(event)
 
     def refresh_theme_labels(self, effective):

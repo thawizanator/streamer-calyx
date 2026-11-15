@@ -1444,9 +1444,23 @@ class RedBorderOverlay(QMainWindow):
             pass
         self.tray_icon.hide()
         if hasattr(self, "settings_window") and self.settings_window:
-            if hasattr(self.settings_window, "tab_director") and self.settings_window.tab_director.panel_window:
-                self.settings_window.tab_director.panel_window.close()
-        self.settings_window.close()
+            if hasattr(self.settings_window, "tab_director") and self.settings_window.tab_director:
+                try:
+                    if hasattr(self.settings_window.tab_director, "shutdown"):
+                        self.settings_window.tab_director.shutdown()
+                    elif hasattr(self.settings_window.tab_director, "soundboard_lan_server") and self.settings_window.tab_director.soundboard_lan_server:
+                        self.settings_window.tab_director.soundboard_lan_server.stop()
+                except Exception:
+                    pass
+                if getattr(self.settings_window.tab_director, "panel_window", None):
+                    try:
+                        self.settings_window.tab_director.panel_window.close()
+                    except Exception:
+                        pass
+            try:
+                self.settings_window.close()
+            except Exception:
+                pass
         if lock_file_handle:
             lock_file_handle.close()
         try:
