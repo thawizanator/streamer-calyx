@@ -1,9 +1,48 @@
+import os
+import sys
+import json
 from PyQt6.QtCore import QObject, QEvent, Qt
 from PyQt6.QtWidgets import (
     QWidget, QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QGroupBox, QAbstractButton, QComboBox, QCheckBox, QSlider
 )
 import theme_manager
+
+
+def load_context_help_db() -> dict:
+    """
+    Loads contextual help entries from external context_help.json files,
+    merging user overrides in %APPDATA%\\StreamerCalyx\\context_help.json
+    over the bundled context_help.json and built-in fallback dictionary.
+    """
+    merged = {k: (v[0], v[1]) for k, v in CONTEXT_HELP_DB.items()}
+    candidate_paths = []
+    if getattr(sys, "frozen", False):
+        exe_dir = os.path.dirname(sys.executable)
+        meipass = getattr(sys, "_MEIPASS", exe_dir)
+        candidate_paths.append(os.path.join(meipass, "context_help.json"))
+        candidate_paths.append(os.path.join(exe_dir, "context_help.json"))
+    else:
+        candidate_paths.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "context_help.json"))
+
+    appdata = os.environ.get("APPDATA", "")
+    if appdata:
+        candidate_paths.append(os.path.join(appdata, "StreamerCalyx", "context_help.json"))
+
+    for path in candidate_paths:
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    for key, val in data.items():
+                        if isinstance(val, dict) and "body" in val:
+                            merged[key.lower().strip()] = (val.get("title", key), val["body"])
+                        elif isinstance(val, str):
+                            merged[key.lower().strip()] = (key, val)
+            except Exception:
+                pass
+    return merged
 
 
 # Rich contextual help entries keyed by substring/keyword match on objectName, label, or tooltip
@@ -177,10 +216,11 @@ class ContextHelpFilter(QObject):
         if not section and hasattr(self.settings_win, "lbl_page_title"):
             section = self.settings_win.lbl_page_title.text().strip()
 
-        # Check rich database first
+        # Check external JSON + built-in database
         search_blob = f"{title} {tooltip} {section} {widget.objectName()}".lower()
         body = ""
-        for key, (db_title, db_body) in CONTEXT_HELP_DB.items():
+        help_db = load_context_help_db()
+        for key, (db_title, db_body) in help_db.items():
             if key in search_blob:
                 if not title:
                     title = db_title

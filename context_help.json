@@ -1,0 +1,54 @@
+{
+  "streamer mode": {
+    "title": "Streamer Mode Toggle",
+    "body": "Enables live broadcast integrations including Auto-Clip audio monitoring, Stream Director remote co-host connections, and Twitch Stream Markers.\n\nTip: Turn this OFF when you are not live to pause background audio capture and save CPU."
+  },
+  "content creator mode": {
+    "title": "Content Creator Mode (Offline Production)",
+    "body": "Unlocks Auto-Clip & timestamped Moments Logging (recording_moments.txt) for offline video recording without requiring Twitch live streaming or authentication."
+  },
+  "moment bookmark": {
+    "title": "Recording Moment Bookmark Hotkey",
+    "body": "Drops an instant timestamped bookmark with your elapsed session time and active game/window title into recording_moments.txt and recording_moments.json."
+  },
+  "highlight hotkey": {
+    "title": "Primary Alert Highlight Hotkey",
+    "body": "Global shortcut that flashes your selected monitor's border overlay to grab attention.\n\nYou can bind keyboard chords, mouse side buttons, or gamepad combos here or in the Unified Hotkeys & Peripherals tab — both stay synced automatically."
+  },
+  "launchpad": {
+    "title": "Stream Launchpad & Mission Control",
+    "body": "Your pre-flight broadcast checklist and 1-Click 'GO FOR LAUNCH' trigger.\n\nVerifies OBS/Streamlabs connection, starts Chronos timers, enables Rotating Text, and takes your stream live in one action."
+  },
+  "stream director": {
+    "title": "Stream Director & Remote Co-Host",
+    "body": "Allows trusted remote co-hosts or moderators to switch scenes, mute audio tracks, adjust faders, and optionally control recording over encrypted P2P WebRTC with granular per-element permissions."
+  },
+  "auto-clip": {
+    "title": "Auto-Clip & Stream Markers",
+    "body": "Monitors your microphone or VoiceMeeter input in real time to detect hype moments and automatically drop Twitch Stream Markers or offline recording bookmarks."
+  },
+  "soundboard": {
+    "title": "Soundboard & Anti-Spam Troll Shield",
+    "body": "Plays local audio cues and lets authorized remote directors trigger sounds. Includes rate-limiting and panic lock protection against rapid-fire spam."
+  },
+  "chronos": {
+    "title": "Chronos Live Stream Timers",
+    "body": "Multi-timer suite supporting Countdowns, Stopwatches, and Interval timers with automatic OBS/SLOBS text file output (timer_display.txt)."
+  },
+  "rotating text": {
+    "title": "Rotating Text & Trivia Cycler",
+    "body": "Automatically cycles rules, sponsor shoutouts, social links, or interactive Trivia Q&A to an OBS/SLOBS text file on a configurable schedule."
+  },
+  "audio devices": {
+    "title": "Audio Devices & Routing",
+    "body": "Master hub for selecting your Windows WASAPI microphone/VoiceMeeter capture device and your Soundboard/Alert playback output device. Changes sync across all tabs."
+  },
+  "monitor setup": {
+    "title": "Multi-Monitor Configuration",
+    "body": "Select which physical display receives the border alert overlay and configure DPI awareness mode for mixed-resolution multi-monitor setups."
+  },
+  "hotkeys": {
+    "title": "Unified Hotkeys & Peripherals",
+    "body": "Central binding manager for keyboard chords, Mouse 3/4/5, and XInput gamepads. Supports hold thresholds and multi-button release shielding. Changes sync two-way with individual tabs."
+  }
+}

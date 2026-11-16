@@ -5,7 +5,8 @@ from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 datas = [
     ('icon.ico', '.'),
     ('icon.png', '.'),
-    ('splash-image.png', '.')
+    ('splash-image.png', '.'),
+    ('context_help.json', '.'),
 ] + collect_data_files('aiortc')
 
 hidden_imports = [

@@ -1751,30 +1751,47 @@ class DirectorPanelWindow(QWidget):
         if mode not in ("horizontal", "vertical"):
             mode = "horizontal"
         self.orientation = mode
-        if mode == "vertical":
-            if hasattr(self, "lbl_title") and self.lbl_title:
-                self.lbl_title.setText("🎬 <b>DOCK</b>")
-            if hasattr(self, "lbl_status") and self.lbl_status:
-                self.lbl_status.setText("<span style='color: #22c55e;'>●</span>")
-            if hasattr(self, "btn_flip") and self.btn_flip:
-                self.btn_flip.setText("⇄")
-                self.btn_flip.setFixedSize(22, 20)
-                self.btn_flip.setToolTip("Dock layout: Vertical. Click to switch to Horizontal (bottom-dock).")
-            self.setFixedWidth(230)
-        else:
-            self.setMinimumWidth(380)
-            self.setMaximumWidth(16777215)
-            if hasattr(self, "lbl_title") and self.lbl_title:
-                self.lbl_title.setText("🎬  <b>STREAM DIRECTOR DOCK</b>")
-            if hasattr(self, "lbl_status") and self.lbl_status:
-                self.lbl_status.setText("<span style='color: #22c55e;'>● Connected</span>")
-            if hasattr(self, "btn_flip") and self.btn_flip:
-                self.btn_flip.setText("⇄ Side")
-                self.btn_flip.setFixedSize(50, 20)
-                self.btn_flip.setToolTip("Dock layout: Horizontal. Click to switch to Vertical (side-dock).")
+        self._programmatic_resizing = True
+        try:
+            if mode == "vertical":
+                if hasattr(self, "lbl_title") and self.lbl_title:
+                    self.lbl_title.setText("🎬 <b>DOCK</b>")
+                if hasattr(self, "lbl_status") and self.lbl_status:
+                    self.lbl_status.setText("<span style='color: #22c55e;'>●</span>")
+                if hasattr(self, "btn_flip") and self.btn_flip:
+                    self.btn_flip.setText("⇄")
+                    self.btn_flip.setFixedSize(22, 20)
+                    self.btn_flip.setToolTip("Dock layout: Vertical. Click to switch to Horizontal (bottom-dock).")
+                self.setFixedWidth(230)
+            else:
+                self.setMinimumWidth(380)
+                self.setMaximumWidth(16777215)
+                if getattr(self, "_user_custom_width", None) and self._user_custom_width <= 380:
+                    self._user_custom_width = None
+                if getattr(self, "_stable_dock_width", None) and self._stable_dock_width <= 380:
+                    self._stable_dock_width = None
+                if hasattr(self, "lbl_title") and self.lbl_title:
+                    self.lbl_title.setText("🎬  <b>STREAM DIRECTOR DOCK</b>")
+                if hasattr(self, "lbl_status") and self.lbl_status:
+                    self.lbl_status.setText("<span style='color: #22c55e;'>● Connected</span>")
+                if hasattr(self, "btn_flip") and self.btn_flip:
+                    self.btn_flip.setText("⇄ Side")
+                    self.btn_flip.setFixedSize(50, 20)
+                    self.btn_flip.setToolTip("Dock layout: Horizontal. Click to switch to Vertical (side-dock).")
 
-        self._rebuild_orientation_layout()
-        self.reposition_above_taskbar()
+            self._rebuild_orientation_layout()
+            if self.content_widget.layout():
+                self.content_widget.layout().invalidate()
+                self.content_widget.layout().activate()
+            if self.layout():
+                self.layout().invalidate()
+                self.layout().activate()
+            if mode == "horizontal":
+                self.resize(800, 172)
+                self._update_stable_dock_width()
+            self.reposition_above_taskbar()
+        finally:
+            self._programmatic_resizing = False
         self.orientation_changed.emit(self.orientation)
         log_debug("DIRECTOR", f"Director dock layout orientation changed to: {self.orientation}")
 
@@ -2723,7 +2740,7 @@ class DirectorPanelWindow(QWidget):
             pos_x = avail.right() - dock_width - 8
             pos_y = avail.y() + 8
         else:
-            dock_height = max(hint.height(), 172)
+            dock_height = max(self.minimumSizeHint().height(), 172)
             max_allowed_w = max(320, avail.width() - 16)
             target_w = getattr(self, "_user_custom_width", None) or getattr(self, "_stable_dock_width", None)
             if not target_w or target_w < 380:
@@ -2745,9 +2762,13 @@ class DirectorPanelWindow(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if not getattr(self, "_programmatic_resizing", False) and not getattr(self, "_in_size_probe", False):
+        if (
+            getattr(self, "orientation", "horizontal") == "horizontal"
+            and not getattr(self, "_programmatic_resizing", False)
+            and not getattr(self, "_in_size_probe", False)
+        ):
             curr_w = self.width()
-            if abs(curr_w - getattr(self, "_stable_dock_width", 0)) > 5:
+            if curr_w > 380 and abs(curr_w - getattr(self, "_stable_dock_width", 0)) > 5:
                 self._user_custom_width = curr_w
                 self._stable_dock_width = curr_w
         if hasattr(self, "size_grip") and self.size_grip:
