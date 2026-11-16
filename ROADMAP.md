@@ -6,8 +6,8 @@ Welcome to the development roadmap for **Streamer Calyx** (formerly *HotKey Over
 
 ## 🧭 Release Architecture & Branches
 
-- **`main` Branch**: Tracks stable production releases (currently **`v3.0.0`**).
-- **`develop` Branch**: Tracks active feature branches, updates, and previews (currently **`v3.0.0`**).
+- **`main` Branch**: Tracks stable production releases (currently **`v3.0.2`**).
+- **`develop` Branch**: Tracks active feature branches, updates, and previews (currently **`v4.0.0-dev`**).
 
 ---
 
@@ -106,14 +106,246 @@ Welcome to the development roadmap for **Streamer Calyx** (formerly *HotKey Over
 
 ---
 
-## 🔮 Ahead: v4 Roadmap Backlog (Under Discussion)
+### Phase 7.1: Production Maintenance, Tray Exit & Soundboard Thread Safety Hotfixes (`v3.0.1` / `v3.0.2`) — *Completed*
+- **v3.0.1 Stable Hotfix**:
+  - Fixed `NameError: name 'keyboard' is not defined` regression when closing the application from the Windows system tray context menu (`main.py`).
+  - Added clean module-level import verification and fallback handling for the global keyboard hook dispatcher.
+- **v3.0.2 Stable Hotfix**:
+  - Fixed `RuntimeError: wrapped C/C++ object of type SoundboardLANServer has been deleted` during app exit.
+  - Implemented thread-safe peer disconnect routines, atomic Qt signal unhooking, and graceful server socket shutdown before C++ Qt teardown (`soundboard_lan_bridge.py`, `director_tab.py`, `main.py`).
+- **Release Ledger & Cryptographic Packaging**:
+  - Compiled and published signed installers (`StreamerCalyx_Setup.exe` and `StreamerCalyx_Portable.exe`) to GitHub Release `v3.0.2`.
+  - Registered releases in the standalone cryptographic ledger and encyclopedia (`C:\Users\thawi\Desktop\StreamerCalyx_Ledger.html`).
+
+---
+
+## 🚀 Version 4.0: The Modular Creator Ecosystem & Next-Gen Backstage Suite
+
+Streamer Calyx V4 expands from a Twitch-centric live overlay and remote director into a comprehensive, multi-platform, modular streaming and content creation ecosystem.
+
+---
+
+### Phase 8: Core Shell & Navigation Redesign, Hotkey Sync Broker & Dynamic Scaling
+*Regrouped sidebar categories, synchronized header dropdown, master audio tab, two-way hotkey broker, dynamic cross-monitor scaling, first-run wizard & context help.*
+
+- **8.1 Left Sidebar Regrouping & Workflow-Based Reorganization**:
+  - Re-group and re-order the left sidebar shell into logical, workflow-centered categories:
+    - **MISSION CONTROL**:
+      - 🚀 Launchpad (Page 0 — immediate top-level broadcast trigger)
+      - 🏠 Main & Streaming Mode (Page 1 — core alert toggle & mode status)
+    - **OVERLAY & VISUALS**:
+      - 🎨 Alert Overlay Styles & Effects (monitor borders, animation triggers)
+    - **AUDIO & SPEECH**:
+      - 🔊 Soundboard & Audio Cues
+      - 🎙️ Auto-Clip & Stream Markers
+      - 🎧 Audio Devices & Routing (dedicated master view for WASAPI input/output device selection, gain trim, VoiceMeeter routing, and audio monitoring channels)
+    - **STREAM TOOLS & AUTOMATION**:
+      - 🟣 Twitch Channel & Macros
+      - ⏱️ Chronos Timers
+      - 📜 Rotating Text & Trivia Cycler
+      - 🎬 Stream Director Panel
+    - **SYSTEM & SETTINGS**:
+      - 🖥️ Monitor Setup & Calibration (relocated from Overlay to System & Settings where hardware configuration belongs)
+      - 🎮 Unified Hotkeys & Peripherals
+      - ⚙️ System Diagnostics & Calibration
+      - 📑 Logs & Debugging Suite
+      - 🌸 About Streamer Calyx (Creator Socials & Tip deck)
+- **8.2 Collapsible Sidebar Accordion & 1:1 Synchronized Collapsed Dropdown**:
+  - Add collapsible accordion headers (`▼` / `▶`) to each category in the left sidebar to save vertical space.
+  - **1:1 Dropdown Parity**: Update the header bar's collapsed view dropdown (`combo_collapsed_nav`) to dynamically mirror the exact category grouping, visual indentation, icons, and item order of the left sidebar so navigation is 100% identical whether the sidebar is expanded or collapsed.
+- **8.3 Bi-Directional Hotkey Synchronization & Central Binding Broker**:
+  - Establish a single-source-of-truth **Hotkey Broker**:
+    - Any hotkey input widget across the app (Trivia manual advance, Chronos timer hotkeys, Alert manual triggers, Moment Bookmark hotkey, Auto-Clip test triggers, Soundboard quick buttons) is registered with the central hotkey broker.
+    - All hotkeys are referenced, displayed, and editable within the **🎮 Hotkeys & Peripherals** tab.
+    - **Two-Way Real-Time Sync**: Editing or clearing a hotkey on an individual tab immediately updates its row on the Hotkeys tab, and vice-versa.
+    - Built-in conflict detection, duplicate prevention warnings, and synchronized persistence to `config.json`.
+- **8.4 Dynamic Cross-Monitor Scaling & Multi-Ratio Resiliency**:
+  - Multi-monitor responsive layout engine:
+    - When the Calyx window is dragged between displays with differing scale factors (e.g. 100% 1080p, 125% 1440p, 150% 4K) or different aspect ratios (ultrawide 21:9, standard 16:9, portrait/vertical 9:16), the application listens to Win32 `WM_DPICHANGED` and Qt `screenChanged` events.
+    - Dynamically recalculates widget sizes, margins, font scales, and scroll viewport constraints.
+    - Guarantees zero widget clipping, no truncated text or action buttons, and automatic scrollbar engagement when vertical space is constrained on compact laptop or portrait monitors.
+- **8.5 First-Run Interactive Setup Wizard**:
+  - Launch a step-by-step onboarding wizard for first-time installs:
+    - Welcome & Streamer vs. Content Creator Mode selection.
+    - Automatic multi-monitor detection & DPI alignment check.
+    - Default audio device selector (Microphone / VoiceMeeter Output B3).
+    - 1-Click Streamlabs Desktop / OBS Studio WebSocket & Named Pipe handshake.
+  - Add a **"Re-run Setup Wizard"** button in **System & Settings** for easy re-calibration anytime.
+- **8.6 100% Comprehensive Tooltip Coverage & Context Help Cards**:
+  - Add explanatory tooltips to **every** button, slider, checkbox, dropdown, and input field across all tabs.
+  - **Context Help System**: Implement `Shift + Right-Click` on any UI element or section header to open an interactive **"What is this?"** floating help card containing detailed markdown explanations, hotkey tips, and usage recommendations.
+- **8.7 Creator Socials & Support Deck in About Tab**:
+  - Integrate official creator support and tip links into the **🌸 About** tab:
+    - Direct **Streamlabs Tip** button (`https://streamlabs.com/thawizanator/tip`).
+    - Direct **PayPal** donation link.
+  - Full creator social media matrix with high-contrast clickable badges: Discord Community, Twitch Channel, YouTube Channel, and GitHub Repository.
+- **8.8 Calyx Support Bot Telemetry & Diagnostic Schema (Beta / Early Access Readiness)**:
+  - Standardize diagnostic export schemas and crash log formats (`debug.txt`, `crash.log`, `telemetry_report.json`) right from Day 1 of V4 development.
+  - Guarantees that as soon as preview builds drop on the **Beta / Early Access** channel, testers' diagnostic bundles and bug reports are 100% ingestible and solvable by the standalone Calyx Support Bot.
+
+---
+
+### Phase 9: Content Creator & Offline Production Suite
+*Empower offline video creators, YouTubers, and podcasters with dedicated session logging.*
+
+- **9.1 Dual-Mode Operation (Streamer Mode vs. Content Creator Mode)**:
+  - Add a dedicated **"Content Creator Mode"** checkbox alongside the existing "Streamer Mode" toggle.
+  - Allows creators recording offline (without streaming to Twitch) to run Calyx's timers, soundboards, hotkeys, and marker logging without requiring Twitch authentication.
+- **9.2 Offline Production Moments Logger**:
+  - Real-time session logger writing formatted timestamped bookmarks to `%APPDATA%\StreamerCalyx\recording_moments.txt` and `.json`.
+  - Captures elapsed recording time, system time, active window/game title, and event description for rapid video post-production.
+- **9.3 Global Moment Bookmark Hotkey & Gamepad Chord**:
+  - Register a dedicated global hotkey / controller button combo (e.g., `Guide + B` or configurable keyboard shortcut) to drop instant timestamped bookmarks during gameplay without pausing.
+- **9.4 Stream Director Recording Control**:
+  - Add a dedicated **"Start / Stop Recording"** button to the remote Stream Director dock.
+  - Protect recording controls with a granular streamer security permission gate (`allow_recording_control`), preventing unauthorized co-host triggers.
+
+---
+
+### Phase 10: Native Acoustic Auto-Clip & Stream Marker System Overhaul
+*Transition the validated DSP prosody engine from the standalone prototype into Calyx's core backend.*
+
+- **10.1 Vectorized Acoustic Prosody DSP Pipeline (`auto_clip_engine.py`)**:
+  - High-performance 20 Hz (50ms window) digital signal processing:
+    - Stevens' power-law perceptual loudness expansion ($RMS^{0.5} + Peak^{0.5}$).
+    - Sub-bass desk thump / mic drop rejection filter ($<70\text{ Hz}$).
+    - Human vocal tract Voice Activity Detection ($80\text{ Hz} - 3500\text{ Hz}$).
+    - Autocorrelation pitch tracking ($F_0$ 80–550 Hz) with sudden inflection detection ($>1.35\times$ baseline).
+    - Human laughter envelope cadence tracking in the 4–6 Hz frequency window.
+- **10.2 8-Zone Human Vocal Reaction Classifier**:
+  - Automatically classifies every vocal spike into 8 distinct stream moments:
+    1. 🔥 *Pure Hype Explosion*
+    2. 😂 *Hysterical Laughter Fit*
+    3. 😱 *High-Pitched Scream / Shriek*
+    4. 📢 *Victory Shout / Callout*
+    5. 😆 *Hyped Laughing Burst*
+    6. 🗣️ *Intense Rapid Banter*
+    7. 😮 *Loud Gasp / Shock*
+    8. 💬 *Elevated Excitement*
+- **10.3 Dual-Platform Dispatcher (Twitch Helix + OBS / SLOBS Replay Buffer)**:
+  - Synchronously creates Twitch stream markers with customizable templates (`{icon} {tag} [{game}]`).
+  - Triggers local instant video clipping via OBS Studio WebSocket (`SaveReplayBuffer`) or Streamlabs Desktop Named Pipe (`replayBufferService.save`).
+  - 60-second anti-spam cooldown prevents disk flooding while continuing to log secondary peak reactions in the session history.
+- **10.4 Dual-Tab Calibration GUI (`autoclip_tab.py`)**:
+  - **Basic Tuning Tab**: Master hype threshold slider, min peak duration (100–800ms), anti-spam cooldown (15–120s), and scene whitelist.
+  - **Advanced DSP Tab**: Voice Profiles (*Deep Voice*, *Mid/Conversational*, *High/Expressive*, *Dynamic Auto-Adapt*), Desk Thump filter aggressiveness, and 1-Click Game Genre Presets (*Default*, *😱 Horror*, *😂 Comedy*, *📢 FPS Shout*).
+- **10.5 In-App Clip Vault & Highlight Browser**:
+  - Replay folder watcher monitoring OBS/SLOBS replay directories.
+  - Automatic timestamp-to-reaction video matching (e.g. `2026-11-15_21-40-48_😱_High-Pitched_Scream.mp4`).
+  - Embedded lightweight preview player with timeline scrubber.
+  - Video Editor Export Assistant: 1-click export of marker timestamps to YouTube descriptions and EDL / CSV timeline markers for DaVinci Resolve, Adobe Premiere Pro, and CapCut.
+
+---
+
+### Phase 11: Mission Control "De-Orbit" & Automated Stream Shutdown
+*Execute seamless, professional broadcast sign-offs with one click.*
+
+- **11.1 Automated De-Orbit Sequence**:
+  - Add an automated **"De-Orbit / End Stream"** sequence to the Launchpad:
+    1. Smoothly switch OBS / SLOBS to the designated **"Stream Ending / Outro"** or BRB scene.
+    2. Automatically trigger the Stream Ending Credits / Text Scroller plugin.
+    3. Start an on-screen visual countdown timer (e.g. 60 seconds).
+    4. Mute open microphones to protect backstage privacy.
+    5. Gracefully stop the broadcast stream in SLOBS / OBS when the countdown completes.
+- **11.2 Safety Abort Window**:
+  - Prominent red **"ABORT DE-ORBIT"** cancellation button available throughout the shutdown countdown to instantly halt the sequence if needed.
+
+---
+
+### Phase 12: Stream Director WAN/LAN Next-Gen Video Feed
+*Provide remote directors and co-hosts with real-time visual situational awareness.*
+
+- **12.1 Local LAN Low-Latency Video Stream**:
+  - Direct local LAN video preview feed streamed from SLOBS / OBS virtual camera or RTSP/WebRTC stream directly into the Stream Director Panel.
+- **12.2 Configurable Performance & FPS Throttle**:
+  - User-configurable preview refresh rate slider (1 FPS, 5 FPS, 10 FPS, 15 FPS) to minimize CPU/GPU load on gaming rigs during intense gameplay.
+- **12.3 Remote Recording Control Gate**:
+  - Co-host dock button for starting/stopping OBS recording with live status indicators (`● REC [00:14:22]`).
+
+---
+
+### Phase 13: Multi-Platform Broadcast Gateway (YouTube Live & Kick)
+*Expand Calyx's broadcast integrations beyond Twitch.*
+
+- **13.1 YouTube Gaming / YouTube Live Integration**:
+  - Secure Google OAuth2 authentication flow.
+  - Live broadcast status watchdog & stream health monitoring.
+  - Automatic stream marker creation via YouTube Live Streaming API.
+- **13.2 Kick Streaming Target Compatibility**:
+  - Kick channel metadata synchronization and webhook/API bridge.
+- **13.3 Multi-Stream Unified Event Dispatcher**:
+  - Unified dispatcher routing markers, titles, and category updates concurrently to Twitch, YouTube, and Kick based on active streaming destinations.
+
+---
+
+### Phase 14: Calyx Modular Plugin Architecture & Add-on Engine
+*A modular ecosystem enabling creators to install, build, and share custom features.*
+
+- **14.1 `.calyxplugin` Standard Package Format**:
+  - Single-file compressed ZIP bundle containing:
+    - `plugin.json` (Manifest: unique ID, name, version, author, category, requested permissions).
+    - `main.py` (Plugin entry point inheriting from `CalyxPluginBase`).
+    - Assets, icons, and bundled pure-Python modules.
+- **14.2 1-Click Plugin Manager UI**:
+  - Dedicated **🧩 Plugins & Add-ons** manager tab under System & Settings.
+  - **Zero-Friction Installation**: Prominent "Install Plugin..." file dialog button + drag-and-drop `.calyxplugin` files directly into Calyx.
+  - **Permission & Safety Review Modal**: Visual verification card detailing author, version, and requested permissions before mounting.
+  - Toggle plugins on/off, inspect version updates, and 1-click uninstall.
+- **14.3 Dynamic Sidebar & UI Injection**:
+  - Plugins automatically inject their navigation button into the sidebar under their declared category (`STREAM TOOLS`, `OVERLAY & DISPLAY`, or dedicated `PLUGINS`).
+  - Seamlessly injects plugin UI pages into `SettingsWindow`'s `QStackedWidget` with full Dark/Light theme inheritance.
+- **14.4 Crash-Isolated `CalyxAPI` Runtime Engine**:
+  - Protected API surface providing plugins access to:
+    - Overlay notifications & banner toasts (`api.show_overlay_toast()`).
+    - Config persistence in `%APPDATA%\StreamerCalyx\plugins\<plugin_id>\`.
+    - Global hotkey & peripheral button listener hooks.
+    - Twitch / YouTube / SLOBS event listeners.
+  - Guarded error boundaries (`try/except` wrappers) preventing third-party plugin crashes from impacting core overlay or streaming hotkeys.
+- **14.5 Launch & First-Party Core Plugins**:
+  - **Stream Ending Credits**: Customizable rolling credits scroller (patrons, subscribers, mods, top gifters, and special thanks).
+  - **Backstage Teleprompter**: Floating, resizable script prompter with adjustable scrolling speed and font size.
+  - **Devo's Slots Mini-Game**: Interactive chat-driven or co-host casino slots mini-game.
+  - **StreamElements & Streamlabs Web Bridge**: Direct event listener for web tips, merchandise alerts, and follower goals.
+  - **Encrypted Backstage Peer Chat**: Low-latency, end-to-end encrypted direct text chat between the streamer and all connected remote directors during live sessions.
+  - **VoiceMeeter / Discord Audio Ducking Hotkey**: Global push-to-duck hotkey temporarily attenuating Discord/game audio during intense stream callouts.
+- **14.6 Developer Kit & 1-Click Exporter**:
+  - In-app "Export as .calyxplugin" developer tool allowing developers to package folders into signed plugins with one click.
+  - Complete starter documentation and example plugin templates.
+
+---
+
+### Phase 15: V4 Packaging, Dual EV Code Signing & Release Pipeline
+*Enterprise-grade release packaging for production distribution.*
+
+- **15.1 Optimized PyInstaller Build Pipeline (`main.spec`)**:
+  - Bundle optimized `numpy`, `scipy.signal`, and `soundfile` dynamic libraries.
+  - Exclude heavy unused Qt6 modules to maintain a lean binary footprint (~55–65 MB).
+- **15.2 Dual-Distribution NSIS Modern Installer**:
+  - **`StreamerCalyx_v4_Setup.exe`**: Solid LZMA-compressed per-user installer (`%LOCALAPPDATA%\Programs\StreamerCalyx`) with zero UAC elevation, Start Menu/Desktop shortcuts, and Add/Remove Programs integration.
+  - **Instant Sub-Second Boot**: Unpacked onedir execution eliminating PyInstaller `%TEMP%` extraction delays.
+  - **`StreamerCalyx_v4_Portable.exe`**: Standalone single-file portable edition.
+- **15.3 Dual Authenticode EV Hardware Code Signing**:
+  - Cryptographically sign all executables and installer packages using DigiCert Extended Validation (EV) hardware token with RFC 3161 timestamps.
+  - Guarantee 100% false-positive-free antivirus ratings and zero Windows SmartScreen warnings.
+- **15.4 Seamless Auto-Updater Integration**:
+  - Background GitHub Releases version checks with automatic delta patching and safe restart.
+
+---
+
+## 🔮 Future Backlog (v5.0+ Horizon)
 
 > [!NOTE]
-> The following features are transitioned to the upcoming **v4 Roadmap**. Specific phase numbers, implementation order, and detailed architecture will be discussed and finalized upon the conclusion of Phase 7.
+> The following advanced capabilities are preserved in the long-term backlog for exploration following the Streamer Calyx V4 production cycle:
 
 - **Mobile & Local Web Deck Companion**:
-  - Lightweight local and remote web dashboard accessible from phones, tablets, or secondary browsers.
-  - Touch buttons to trigger monitor alerts, timers, trivia cycling, and Stream Director commands without needing external hardware like an Elgato Stream Deck.
+  - Lightweight local and remote web dashboard accessible from smartphones, tablets, or secondary browser tabs.
+  - Touch buttons to trigger monitor alerts, Chronos timers, trivia cycler, and Stream Director commands without requiring external hardware like an Elgato Stream Deck.
 - **Dedicated Browser Extension / Chrome Plugin**:
-  - Research and develop a custom browser extension that can be packaged or installed alongside the app.
-  - Potential features: Custom stream video formatting, embedding the Stream Director dock directly within Twitch/YouTube web pages, synchronized two-way communication between the web stream player/chat and the desktop app, and automated stream viewport docking.
+  - Custom browser extension packaged alongside Calyx.
+  - Embed the Stream Director dock directly within Twitch/YouTube web pages, synchronize two-way communication between web chat and the desktop app, and provide automated stream viewport docking.
+- **Automated Stream Health & Bitrate Drop Watchdog**:
+  - Passive background monitor tracking dropped frames, encoder lags, and network bitrate fluctuations in OBS/SLOBS with subtle monitor border alert warnings.
+- **Twitch Channel Points & Bits Event Bridge**:
+  - Custom triggers binding Twitch Channel Points rewards and Bits events directly to soundboard audio cues, trivia reveals, or overlay animations.
+- **Encrypted Cloud Sync for Multi-Rig Streamers**:
+  - Secure end-to-end encrypted backup and synchronization of Calyx profiles, hotkeys, timers, and soundboard configs across dual-PC streaming setups.
