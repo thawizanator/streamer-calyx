@@ -125,7 +125,7 @@ Streamer Calyx V4 expands from a Twitch-centric live overlay and remote director
 
 ---
 
-### Phase 8: Core Shell & Navigation Redesign, Hotkey Sync Broker & Dynamic Scaling
+### Phase 8: Core Shell & Navigation Redesign, Hotkey Sync Broker & Dynamic Scaling (`v4.0.0-alpha.1`) — *Completed*
 *Regrouped sidebar categories, synchronized header dropdown, master audio tab, two-way hotkey broker, dynamic cross-monitor scaling, first-run wizard & context help.*
 
 - **8.1 Left Sidebar Regrouping & Workflow-Based Reorganization**:

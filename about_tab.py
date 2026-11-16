@@ -37,7 +37,7 @@ class AboutTab(QWidget):
         container.setStyleSheet("background-color: transparent;")
         layout = QVBoxLayout(container)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(10)
+        layout.setSpacing(8)
 
         # ------------------ CARD 1: THE STREAMER MULTITOOL ------------------
         card_multitool = QFrame()
@@ -61,7 +61,7 @@ class AboutTab(QWidget):
         lay_multitool.addLayout(hdr_multitool)
 
         multitool_text = (
-            "<div style='font-size: 11px; color: #adadb8; line-height: 155%;'>"
+            "<div style='font-size: 11px; color: #adadb8; line-height: 130%;'>"
             "Modern live broadcasting often forces streamers to juggle a chaotic jungle of disjointed background utilities: "
             "one app for screen highlight borders, another for audio spike monitoring and clipping, a separate bot for Twitch chat commands, "
             "an external macro board for OBS scene switching, a desktop countdown clock, a rotating trivia widget, a soundboard player, "
@@ -111,7 +111,7 @@ class AboutTab(QWidget):
         lay_botany.addLayout(hdr_botany)
 
         botany_text = (
-            "<div style='font-size: 11px; color: #adadb8; line-height: 155%;'>"
+            "<div style='font-size: 11px; color: #adadb8; line-height: 130%;'>"
             "In botany, the <b>calyx</b> (<i>/ˈkeɪlɪks/</i>, from Ancient Greek <i>kályx</i> 'husk, cup') "
             "is the outermost whorl of a flower, formed by the protective sepals that enclose, cushion, "
             "and shield the delicate flower bud as it develops, guarding it from frost, wind, and pests "
@@ -255,6 +255,105 @@ class AboutTab(QWidget):
 
         lay_links.addLayout(btn_row)
         layout.addWidget(card_links)
+
+        # ------------------ CARD 4: CREATOR SUPPORT & SOCIALS ------------------
+        card_socials = QFrame()
+        card_socials.setStyleSheet("""
+            QFrame {
+                background-color: #18181b;
+                border: 1px solid #27272a;
+                border-radius: 8px;
+                padding: 12px;
+            }
+        """)
+        lay_socials = QVBoxLayout(card_socials)
+        lay_socials.setSpacing(8)
+
+        lbl_soc_title = QLabel("💜  <b>Support the Creator & Community Socials</b>")
+        lbl_soc_title.setStyleSheet("font-size: 13px; color: #efeff1; font-weight: bold;")
+        lbl_soc_title.setToolTip("Support ongoing development of Streamer Calyx and connect with the community.")
+        lay_socials.addWidget(lbl_soc_title)
+
+        lbl_soc_desc = QLabel(
+            "Streamer Calyx is 100% free and open-source. If Calyx powers your broadcasts, consider supporting development or joining the community!"
+        )
+        lbl_soc_desc.setWordWrap(True)
+        lbl_soc_desc.setStyleSheet("font-size: 11px; color: #a1a1aa;")
+        lay_socials.addWidget(lbl_soc_desc)
+
+        # Tip / Donate Row
+        tip_row = QHBoxLayout()
+        tip_row.setSpacing(8)
+
+        btn_streamlabs_tip = QPushButton("☕ Tip via Streamlabs")
+        btn_streamlabs_tip.setToolTip("Send a tip via Streamlabs (https://streamlabs.com/thawizanator/tip).")
+        btn_streamlabs_tip.setStyleSheet("""
+            QPushButton {
+                background-color: #10b981;
+                color: #ffffff;
+                border: none;
+                padding: 6px 14px;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #059669; }
+        """)
+        btn_streamlabs_tip.clicked.connect(lambda: webbrowser.open("https://streamlabs.com/thawizanator/tip"))
+        tip_row.addWidget(btn_streamlabs_tip)
+
+        btn_paypal = QPushButton("💳 Donate via PayPal")
+        btn_paypal.setToolTip("Support Streamer Calyx directly via PayPal.")
+        btn_paypal.setStyleSheet("""
+            QPushButton {
+                background-color: #0070ba;
+                color: #ffffff;
+                border: none;
+                padding: 6px 14px;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #005ea6; }
+        """)
+        btn_paypal.clicked.connect(lambda: webbrowser.open("https://paypal.me/thawizanator"))
+        tip_row.addWidget(btn_paypal)
+        tip_row.addStretch()
+        lay_socials.addLayout(tip_row)
+
+        # Socials Matrix Row
+        soc_grid = QGridLayout()
+        soc_grid.setSpacing(6)
+
+        social_defs = [
+            ("💬 Discord Community", "Join the Discord server for beta previews, plugins & support.", "https://discord.gg/thawizanator", "#5865F2"),
+            ("🟣 Twitch Channel", "Watch ThaWizanator live on Twitch.", "https://www.twitch.tv/thawizanator", "#9146FF"),
+            ("🔴 YouTube Channel", "Subscribe for tutorials, stream highlights & dev logs.", "https://www.youtube.com/@thawizanator", "#EF4444"),
+            ("🐙 GitHub Profile", "Explore ThaWizanator's open-source repositories.", f"https://github.com/{GITHUB_REPO}", "#3f3f46"),
+        ]
+        for idx, (label, tip, url, bg) in enumerate(social_defs):
+            btn = QPushButton(label)
+            btn.setToolTip(tip)
+            btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: #27272a;
+                    color: #efeff1;
+                    border: 1px solid {bg};
+                    padding: 6px 10px;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{
+                    background-color: {bg};
+                    color: #ffffff;
+                }}
+            """)
+            btn.clicked.connect(lambda checked=False, u=url: webbrowser.open(u))
+            soc_grid.addWidget(btn, idx // 2, idx % 2)
+
+        lay_socials.addLayout(soc_grid)
+        layout.addWidget(card_socials)
 
         layout.addStretch()
         scroll_area.setWidget(container)

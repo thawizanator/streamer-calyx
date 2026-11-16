@@ -557,6 +557,7 @@ class RedBorderOverlay(QMainWindow):
         self.flash_timer = QTimer(self)
         self.flash_timer.timeout.connect(self.process_flash_step)
         self.flash_direction = -1
+        self._flash_phase = 1.0
 
         if self.splash:
             self.splash.set_status("Initializing system tray & hub...", 75)
@@ -629,6 +630,8 @@ class RedBorderOverlay(QMainWindow):
         self.update_channel = "stable"
         self.theme_preference = "system"
         self.sidebar_collapsed = False
+        self.collapsed_categories = []
+        self.setup_wizard_completed = False
         self.dpi_mode = "system"
         self.twitch_channel = ""
         self.twitch_login = ""
@@ -671,6 +674,8 @@ class RedBorderOverlay(QMainWindow):
                     self.update_channel = d.get("update_channel", "stable")
                     self.theme_preference = d.get("theme_preference", "system")
                     self.sidebar_collapsed = d.get("sidebar_collapsed", False)
+                    self.collapsed_categories = d.get("collapsed_categories", [])
+                    self.setup_wizard_completed = d.get("setup_wizard_completed", False)
                     self.dpi_mode = d.get("dpi_mode", "system")
                     self.beta_telemetry_acknowledged = d.get("beta_telemetry_acknowledged", False)
                     self.launch_checklist = d.get("launch_checklist", [])
@@ -737,6 +742,8 @@ class RedBorderOverlay(QMainWindow):
             "update_channel": getattr(self, "update_channel", "stable"),
             "theme_preference": getattr(self, "theme_preference", "system"),
             "sidebar_collapsed": getattr(self, "sidebar_collapsed", False),
+            "collapsed_categories": getattr(self, "collapsed_categories", []),
+            "setup_wizard_completed": getattr(self, "setup_wizard_completed", False),
             "dpi_mode": getattr(self, "dpi_mode", "system"),
             "twitch_channel": self.twitch_channel,
             "twitch_login": getattr(self, "twitch_login", ""),
@@ -1348,15 +1355,16 @@ class RedBorderOverlay(QMainWindow):
     def process_flash_step(self):
         if self.flash_speed_name == "Always On":
             return
-        cur = self.windowOpacity()
-        new_op = cur + (self.flash_direction * SPEED_MAPPING.get(self.flash_speed_name, 0.04))
-        if new_op <= 0.15:
-            new_op = 0.15
+        step = SPEED_MAPPING.get(self.flash_speed_name, 0.04)
+        phase = getattr(self, "_flash_phase", 1.0) + (self.flash_direction * step)
+        if phase <= 0.15:
+            phase = 0.15
             self.flash_direction = 1
-        elif new_op >= self.border_opacity:
-            new_op = self.border_opacity
+        elif phase >= 1.0:
+            phase = 1.0
             self.flash_direction = -1
-        self.setWindowOpacity(new_op)
+        self._flash_phase = phase
+        self.setWindowOpacity(phase * self.border_opacity)
 
     def flash_temporary_alert(self, duration_ms=1500, color=None):
         """
@@ -1421,9 +1429,21 @@ class RedBorderOverlay(QMainWindow):
             self.settings_window.view_visual.monitor_combo.setCurrentIndex(self.target_monitor_index)
         if hasattr(self.settings_window, "tab_director"):
             self.settings_window.tab_director.refresh_monitors_list()
+        if hasattr(self.settings_window, "tab_audio"):
+            self.settings_window.tab_audio.refresh_devices()
         self.settings_window.show()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
+        if not getattr(self, "setup_wizard_completed", False) and not getattr(self, "_wizard_prompted_this_session", False):
+            self._wizard_prompted_this_session = True
+            QTimer.singleShot(250, self._launch_first_run_wizard)
+
+    def _launch_first_run_wizard(self):
+        try:
+            from setup_wizard import SetupWizardDialog
+            SetupWizardDialog(self.settings_window).exec()
+        except Exception as e:
+            log_debug("ERROR", f"First-run SetupWizard error: {e}")
 
     def close_application(self):
         global lock_file_handle

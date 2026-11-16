@@ -11,8 +11,8 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QL
                              QComboBox, QPushButton, QSlider, QColorDialog, 
                              QMessageBox, QLineEdit, QTabWidget, QCheckBox, 
                              QGroupBox, QProgressBar, QDialog, QButtonGroup, 
-                             QStackedWidget, QFrame)
-from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QKeySequence, QShortcut
+                             QStackedWidget, QFrame, QScrollArea)
+from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QKeySequence, QShortcut, QGuiApplication
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from updater import (UpdateCheckWorker, DownloadWorker, apply_update_and_restart, 
@@ -32,6 +32,9 @@ from autoclip_tab import AutoClipTab
 from about_tab import AboutTab
 from stream_launch_tab import StreamLaunchTab
 from logs_tab import LogsTab
+from audio_tab import AudioTab
+from setup_wizard import SetupWizardDialog
+from context_help import ContextHelpFilter
 
 SPEED_MAPPING = {"Snail": 0.01, "Turtle": 0.02, "Squirrel": 0.04, "Cheetah": 0.08, "Lightning": 0.15, "Always On": 0.00}
 TWITCH_COMMANDS = [
@@ -329,6 +332,14 @@ class MainTab(QWidget):
 
         self.refresh_theme_labels(theme_manager.get_effective_theme(getattr(self.main_win.overlay, "theme_preference", "system")))
         self.update_activation_hotkey_label()
+
+        input_mgr = getattr(self.main_win.overlay, "input_manager", None)
+        if input_mgr and hasattr(input_mgr, "binding_changed"):
+            input_mgr.binding_changed.connect(self._on_input_binding_changed)
+
+    def _on_input_binding_changed(self, action_id: str):
+        if action_id in ("", "primary_overlay"):
+            self.update_activation_hotkey_label()
 
     def refresh_theme_labels(self, effective):
         sec_color = theme_manager.get_secondary_text_color(effective)
@@ -791,6 +802,29 @@ class TwitchTab(QWidget):
 
         self.update_connection_ui()
 
+        self._syncing_macros = False
+        input_mgr = getattr(self.main_win.overlay, "input_manager", None)
+        if input_mgr and hasattr(input_mgr, "binding_changed"):
+            input_mgr.binding_changed.connect(self._on_input_binding_changed)
+
+    def _on_input_binding_changed(self, action_id: str):
+        if self._syncing_macros:
+            return
+        if action_id and not action_id.startswith("macro_"):
+            return
+        input_mgr = getattr(self.main_win.overlay, "input_manager", None)
+        if not input_mgr:
+            return
+        for idx, row_data in enumerate(self.rows):
+            act_id = f"macro_{idx}"
+            if action_id and action_id != act_id:
+                continue
+            b_info = input_mgr.bindings.get(act_id, {})
+            b_str = b_info.get("binding", "")
+            btn_hk = row_data.get("btn_hk")
+            if btn_hk:
+                btn_hk.setText(b_str if b_str else "set hotkey...")
+
     def _on_broadcaster_channel_changed(self, text):
         self.main_win.overlay.twitch_channel = text.strip()
         self.main_win.overlay.save_settings()
@@ -973,7 +1007,11 @@ class TwitchTab(QWidget):
         ]
         self.main_win.overlay.twitch_macros = p_macros
         self.main_win.overlay.save_settings()
-        self.main_win.overlay.rebind_twitch_macros()
+        self._syncing_macros = True
+        try:
+            self.main_win.overlay.rebind_twitch_macros()
+        finally:
+            self._syncing_macros = False
 
 
 # ==============================================================================
@@ -1175,6 +1213,13 @@ class SystemTab(QWidget):
         btn_jump_about.setStyleSheet("background-color: #27272a; color: #efeff1; border: 1px solid #3f3f46; padding: 6px 12px; border-radius: 4px; font-size: 11px;")
         btn_jump_about.clicked.connect(lambda: self.main_win.set_view_index(13))
         row_jump.addWidget(btn_jump_about)
+
+        btn_rerun_wizard = QPushButton("🚀 Re-run Setup Wizard")
+        btn_rerun_wizard.setToolTip("Launch the interactive onboarding wizard to re-configure broadcast mode, monitor, audio, and OBS/SLOBS.")
+        btn_rerun_wizard.setStyleSheet("background-color: #9146ff; color: #ffffff; border: none; padding: 6px 12px; border-radius: 4px; font-size: 11px; font-weight: bold;")
+        btn_rerun_wizard.clicked.connect(lambda: SetupWizardDialog(self.main_win).exec())
+        row_jump.addWidget(btn_rerun_wizard)
+
         lay_beta.addLayout(row_jump)
 
         layout.addWidget(grp_beta)
@@ -1578,10 +1623,43 @@ PAGE_TITLES = {
     10: "🎙️  Auto-Clip & Stream Markers",
     11: "🚀  Stream Launchpad & Mission Control",
     12: "📑  Logs & Diagnostics Suite",
-    13: "🌸  About Streamer Calyx"
+    13: "🌸  About Streamer Calyx",
+    14: "🎧  Audio Devices & Routing"
 }
 
-SIDEBAR_NAV_ORDER = [11, 0, 1, 2, 3, 5, 6, 7, 9, 10, 8, 4, 12, 13]
+SIDEBAR_CATEGORIES = [
+    ("mission", "MISSION CONTROL", [
+        (11, "🚀  Launchpad", "btn_nav_launch"),
+        (0, "🏠  Main", "btn_nav_main"),
+    ]),
+    ("overlay", "OVERLAY & VISUALS", [
+        (2, "🎨  Alert Overlay", "btn_nav_alert"),
+    ]),
+    ("audio", "AUDIO & SPEECH", [
+        (14, "🎧  Audio & Routing", "btn_nav_audio"),
+        (9, "🔊  Soundboard", "btn_nav_soundboard"),
+        (10, "🎙️  Auto-Clip/Markers", "btn_nav_autoclip"),
+    ]),
+    ("tools", "STREAM TOOLS", [
+        (3, "🟣  Twitch Macros", "btn_nav_twitch"),
+        (5, "⏱️  Chronos Timers", "btn_nav_chronos"),
+        (6, "📜  Rotating Text", "btn_nav_trivia"),
+        (7, "🎬  Stream Director", "btn_nav_director"),
+    ]),
+    ("system", "SYSTEM & SETTINGS", [
+        (1, "🖥️  Monitor Setup", "btn_nav_monitor"),
+        (8, "🎮  Hotkeys && Peripherals", "btn_nav_hotkeys"),
+        (4, "⚙️  System", "btn_nav_system"),
+        (12, "📑  Logs", "btn_nav_logs"),
+        (13, "🌸  About", "btn_nav_about"),
+    ]),
+]
+
+SIDEBAR_NAV_ORDER = [
+    page_idx
+    for _, _, items in SIDEBAR_CATEGORIES
+    for page_idx, _, _ in items
+]
 
 
 class SettingsWindow(QWidget):
@@ -1592,9 +1670,21 @@ class SettingsWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.setWindowTitle(f"Streamer Calyx - Streamer Hub ({get_full_version_string()})")
         self.is_sidebar_collapsed = getattr(self.overlay, "sidebar_collapsed", False)
-        init_width = 570 if self.is_sidebar_collapsed else 780
-        self.setFixedSize(init_width, 600)
+        self._collapsed_categories = set(getattr(self.overlay, "collapsed_categories", []) or [])
+        self._cat_containers = {}
+        self._cat_headers = {}
+        self._screen_signal_connected = False
+
+        init_width = 645 if self.is_sidebar_collapsed else 860
+        self.setMinimumSize(540 if self.is_sidebar_collapsed else 740, 500)
+        self.resize(init_width, 640)
         self.setWindowIcon(get_app_icon())
+
+        # Install Shift+Right-Click Context Help Filter
+        app_inst = QApplication.instance()
+        if app_inst is not None:
+            self.context_help_filter = ContextHelpFilter(self)
+            app_inst.installEventFilter(self.context_help_filter)
 
         # Root Horizontal Layout (Sidebar + Content Area)
         root_layout = QHBoxLayout(self)
@@ -1604,9 +1694,9 @@ class SettingsWindow(QWidget):
         # ------------------ LEFT SIDEBAR ------------------
         self.sidebar_widget = QWidget()
         self.sidebar_widget.setObjectName("sidebarContainer")
-        self.sidebar_widget.setFixedWidth(210)
+        self.sidebar_widget.setFixedWidth(215)
         sidebar_layout = QVBoxLayout(self.sidebar_widget)
-        sidebar_layout.setContentsMargins(12, 14, 12, 14)
+        sidebar_layout.setContentsMargins(10, 12, 10, 12)
         sidebar_layout.setSpacing(4)
 
         # App Brand Header
@@ -1616,65 +1706,56 @@ class SettingsWindow(QWidget):
         lbl_sub.setObjectName("sidebarSub")
         sidebar_layout.addWidget(lbl_brand)
         sidebar_layout.addWidget(lbl_sub)
-        sidebar_layout.addSpacing(6)
+        sidebar_layout.addSpacing(4)
+
+        # Scrollable category container so all 15+ tabs remain accessible on compact screens
+        nav_scroll = QScrollArea()
+        nav_scroll.setWidgetResizable(True)
+        nav_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        nav_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        nav_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        nav_container = QWidget()
+        nav_container.setStyleSheet("background: transparent;")
+        nav_layout = QVBoxLayout(nav_container)
+        nav_layout.setContentsMargins(0, 0, 2, 0)
+        nav_layout.setSpacing(1)
 
         # Exclusive navigation button group
         self.nav_button_group = QButtonGroup(self)
         self.nav_button_group.setExclusive(True)
 
-        # Category 1: MISSION CONTROL
-        lbl_cat_mission = QLabel("MISSION CONTROL")
-        lbl_cat_mission.setObjectName("navCatLabel")
-        sidebar_layout.addWidget(lbl_cat_mission)
+        for cat_id, cat_label, items in SIDEBAR_CATEGORIES:
+            is_cat_collapsed = cat_id in self._collapsed_categories
+            arrow = "▶" if is_cat_collapsed else "▼"
+            disp_cat_label = cat_label.replace("&", "&&")
+            hdr_btn = QPushButton(f"{arrow}  {disp_cat_label}")
+            hdr_btn.setObjectName("navCatLabel")
+            hdr_btn.setFlat(True)
+            hdr_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            hdr_btn.setStyleSheet(
+                "QPushButton#navCatLabel { text-align: left; border: none; background: transparent; "
+                "font-size: 10px; font-weight: bold; padding: 4px 4px 2px 4px; }"
+            )
+            hdr_btn.setToolTip(f"Click to expand or collapse the {cat_label} category.")
+            hdr_btn.clicked.connect(lambda checked=False, cid=cat_id: self._toggle_sidebar_category(cid))
+            nav_layout.addWidget(hdr_btn)
+            self._cat_headers[cat_id] = (hdr_btn, cat_label)
 
-        self.btn_nav_launch = self._create_nav_btn("🚀  Launchpad", 11)
-        self.btn_nav_main = self._create_nav_btn("🏠  Main", 0)
-        sidebar_layout.addWidget(self.btn_nav_launch)
-        sidebar_layout.addWidget(self.btn_nav_main)
+            cat_box = QWidget()
+            cat_box_lay = QVBoxLayout(cat_box)
+            cat_box_lay.setContentsMargins(0, 0, 0, 2)
+            cat_box_lay.setSpacing(1)
+            for page_idx, btn_label, attr_name in items:
+                btn = self._create_nav_btn(btn_label, page_idx)
+                setattr(self, attr_name, btn)
+                cat_box_lay.addWidget(btn)
+            cat_box.setVisible(not is_cat_collapsed)
+            nav_layout.addWidget(cat_box)
+            self._cat_containers[cat_id] = cat_box
 
-        # Category 2: OVERLAY & DISPLAY
-        lbl_cat_display = QLabel("OVERLAY & DISPLAY")
-        lbl_cat_display.setObjectName("navCatLabel")
-        sidebar_layout.addWidget(lbl_cat_display)
-
-        self.btn_nav_monitor = self._create_nav_btn("🖥️  Monitor Setup", 1)
-        self.btn_nav_alert = self._create_nav_btn("🎨  Alert Overlay", 2)
-        sidebar_layout.addWidget(self.btn_nav_monitor)
-        sidebar_layout.addWidget(self.btn_nav_alert)
-
-        # Category 3: STREAM TOOLS
-        lbl_cat_tools = QLabel("STREAM TOOLS")
-        lbl_cat_tools.setObjectName("navCatLabel")
-        sidebar_layout.addWidget(lbl_cat_tools)
-
-        self.btn_nav_twitch = self._create_nav_btn("🟣  Twitch Macros", 3)
-        self.btn_nav_chronos = self._create_nav_btn("⏱️  Chronos Timers", 5)
-        self.btn_nav_trivia = self._create_nav_btn("📜  Rotating Text", 6)
-        self.btn_nav_director = self._create_nav_btn("🎬  Stream Director", 7)
-        self.btn_nav_soundboard = self._create_nav_btn("🔊  Soundboard", 9)
-        self.btn_nav_autoclip = self._create_nav_btn("🎙️  Auto-Clip/Markers", 10)
-        sidebar_layout.addWidget(self.btn_nav_twitch)
-        sidebar_layout.addWidget(self.btn_nav_chronos)
-        sidebar_layout.addWidget(self.btn_nav_trivia)
-        sidebar_layout.addWidget(self.btn_nav_director)
-        sidebar_layout.addWidget(self.btn_nav_soundboard)
-        sidebar_layout.addWidget(self.btn_nav_autoclip)
-
-        # Category 4: SYSTEM & SETTINGS
-        lbl_cat_sys = QLabel("SYSTEM & SETTINGS")
-        lbl_cat_sys.setObjectName("navCatLabel")
-        sidebar_layout.addWidget(lbl_cat_sys)
-
-        self.btn_nav_hotkeys = self._create_nav_btn("🎮  Hotkeys && Peripherals", 8)
-        self.btn_nav_system = self._create_nav_btn("⚙️  System", 4)
-        self.btn_nav_logs = self._create_nav_btn("📑  Logs", 12)
-        self.btn_nav_about = self._create_nav_btn("🌸  About", 13)
-        sidebar_layout.addWidget(self.btn_nav_hotkeys)
-        sidebar_layout.addWidget(self.btn_nav_system)
-        sidebar_layout.addWidget(self.btn_nav_logs)
-        sidebar_layout.addWidget(self.btn_nav_about)
-
-        sidebar_layout.addStretch()
+        nav_layout.addStretch()
+        nav_scroll.setWidget(nav_container)
+        sidebar_layout.addWidget(nav_scroll, 1)
 
         # Sidebar Footer
         self.lbl_channel_badge = QLabel()
@@ -1700,7 +1781,7 @@ class SettingsWindow(QWidget):
         # ------------------ RIGHT CONTENT AREA ------------------
         self.content_area = QWidget()
         content_layout = QVBoxLayout(self.content_area)
-        content_layout.setContentsMargins(16, 14, 16, 12)
+        content_layout.setContentsMargins(12, 12, 12, 10)
         content_layout.setSpacing(8)
 
         # Section Header Row (Sidebar Toggle + Title / Collapsed Selector)
@@ -1721,10 +1802,18 @@ class SettingsWindow(QWidget):
 
         self.combo_collapsed_nav = QComboBox()
         self.combo_collapsed_nav.setObjectName("comboCollapsedNav")
-        self.combo_collapsed_nav.setToolTip("Switch active view")
-        for p_idx in SIDEBAR_NAV_ORDER:
-            if p_idx in PAGE_TITLES:
-                self.combo_collapsed_nav.addItem(PAGE_TITLES[p_idx], p_idx)
+        self.combo_collapsed_nav.setToolTip("Switch active view (mirrors left sidebar order)")
+        nav_model = self.combo_collapsed_nav.model()
+        for _, cat_label, items in SIDEBAR_CATEGORIES:
+            self.combo_collapsed_nav.addItem(f"── {cat_label} ──", None)
+            hdr_row_idx = self.combo_collapsed_nav.count() - 1
+            if hasattr(nav_model, "item"):
+                hdr_item = nav_model.item(hdr_row_idx)
+                if hdr_item:
+                    hdr_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            for p_idx, _, _ in items:
+                if p_idx in PAGE_TITLES:
+                    self.combo_collapsed_nav.addItem(f"   {PAGE_TITLES[p_idx]}", p_idx)
         self.combo_collapsed_nav.currentIndexChanged.connect(self._on_collapsed_nav_changed)
         self.combo_collapsed_nav.setVisible(False)
         header_row.addWidget(self.combo_collapsed_nav)
@@ -1804,6 +1893,10 @@ class SettingsWindow(QWidget):
         self.tab_about = AboutTab(self)
         self.stacked_pages.addWidget(self.tab_about)             # 13
 
+        # Initialize Master Audio Devices & Routing Tab (idx 14)
+        self.tab_audio = AudioTab(self)
+        self.stacked_pages.addWidget(self.tab_audio)             # 14
+
         content_layout.addWidget(self.stacked_pages)
 
 
@@ -1840,6 +1933,56 @@ class SettingsWindow(QWidget):
 
         # Initialize Streamer Mode gating state
         self.update_streamer_mode_state(getattr(self.overlay, "streamer_mode", False))
+
+        # Default to Launchpad (Page 0 in Mission Control)
+        self.set_view_index(11)
+
+    def _toggle_sidebar_category(self, cat_id: str):
+        box = self._cat_containers.get(cat_id)
+        hdr_info = self._cat_headers.get(cat_id)
+        if not box or not hdr_info:
+            return
+        hdr_btn, cat_label = hdr_info
+        disp_cat_label = cat_label.replace("&", "&&")
+        if cat_id in self._collapsed_categories:
+            self._collapsed_categories.remove(cat_id)
+            box.setVisible(True)
+            hdr_btn.setText(f"▼  {disp_cat_label}")
+        else:
+            self._collapsed_categories.add(cat_id)
+            box.setVisible(False)
+            hdr_btn.setText(f"▶  {disp_cat_label}")
+        if self.overlay:
+            self.overlay.collapsed_categories = sorted(self._collapsed_categories)
+            if hasattr(self.overlay, "save_settings"):
+                self.overlay.save_settings()
+
+    def _clamp_to_current_screen(self):
+        """Ensures window dimensions never exceed the active monitor's available geometry."""
+        try:
+            scr = self.screen() or QGuiApplication.primaryScreen()
+            if not scr:
+                return
+            avail = scr.availableGeometry()
+            cur_w = self.width()
+            cur_h = self.height()
+            max_w = max(500, avail.width() - 24)
+            max_h = max(460, avail.height() - 24)
+            new_w = min(cur_w, max_w)
+            new_h = min(cur_h, max_h)
+            if new_w != cur_w or new_h != cur_h:
+                self.resize(new_w, new_h)
+            # Keep window inside screen bounds if moved onto a smaller/portrait display
+            geo = self.frameGeometry()
+            nx = max(avail.left(), min(geo.left(), avail.right() - geo.width()))
+            ny = max(avail.top(), min(geo.top(), avail.bottom() - geo.height()))
+            if nx != geo.left() or ny != geo.top():
+                self.move(nx, ny)
+        except Exception:
+            pass
+
+    def _on_screen_changed(self, screen):
+        self._clamp_to_current_screen()
 
     def _create_nav_btn(self, text, idx):
         btn = QPushButton(text)
@@ -1885,6 +2028,13 @@ class SettingsWindow(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        if not self._screen_signal_connected and self.windowHandle():
+            try:
+                self.windowHandle().screenChanged.connect(self._on_screen_changed)
+                self._screen_signal_connected = True
+            except Exception:
+                pass
+        self._clamp_to_current_screen()
         self.refresh_theme()
 
     def refresh_theme(self):
@@ -1925,6 +2075,8 @@ class SettingsWindow(QWidget):
             self.tab_logs.refresh_theme_labels(effective)
         if hasattr(self, "tab_about"):
             self.tab_about.refresh_theme_labels(effective)
+        if hasattr(self, "tab_audio"):
+            self.tab_audio.refresh_theme_labels(effective)
 
 
         if hasattr(self, "btn_toggle_sidebar") and self.btn_toggle_sidebar:
@@ -2001,11 +2153,11 @@ class SettingsWindow(QWidget):
                 model = self.combo_collapsed_nav.model()
                 item = model.item(c_idx) if hasattr(model, "item") else None
                 if is_active:
-                    self.combo_collapsed_nav.setItemText(c_idx, PAGE_TITLES.get(10, "🎙️  Auto-Clip & Stream Markers"))
+                    self.combo_collapsed_nav.setItemText(c_idx, f"   {PAGE_TITLES.get(10, '🎙️  Auto-Clip & Stream Markers')}")
                     if item:
                         item.setEnabled(True)
                 else:
-                    self.combo_collapsed_nav.setItemText(c_idx, "🎙️  Auto-Clip/Markers 🔒 (Locked)")
+                    self.combo_collapsed_nav.setItemText(c_idx, "   🎙️  Auto-Clip/Markers 🔒 (Locked)")
                     if item:
                         item.setEnabled(False)
 
@@ -2031,7 +2183,9 @@ class SettingsWindow(QWidget):
                 self.combo_collapsed_nav.blockSignals(True)
                 self.combo_collapsed_nav.setCurrentIndex(c_idx)
                 self.combo_collapsed_nav.blockSignals(False)
-            self.setFixedSize(570, 600)
+            self.setMinimumSize(540, 500)
+            self.resize(max(645, self.width() - 215 if self.width() > 740 else 645), self.height())
+            self._clamp_to_current_screen()
         else:
             self.sidebar_widget.show()
             self.divider.show()
@@ -2039,7 +2193,9 @@ class SettingsWindow(QWidget):
             self.btn_toggle_sidebar.setToolTip("Collapse sidebar navigation (Ctrl+B)")
             self.combo_collapsed_nav.setVisible(False)
             self.lbl_page_title.setVisible(True)
-            self.setFixedSize(780, 600)
+            self.setMinimumSize(740, 500)
+            self.resize(max(860, self.width() + 215 if self.width() < 740 else self.width()), self.height())
+            self._clamp_to_current_screen()
 
     def _on_collapsed_nav_changed(self, c_idx):
         target_idx = self.combo_collapsed_nav.itemData(c_idx)

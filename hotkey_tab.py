@@ -807,6 +807,19 @@ class HotkeysTab(QWidget):
         # Populate cards
         self.populate_table()
 
+        if self.input_mgr and hasattr(self.input_mgr, "binding_changed"):
+            self.input_mgr.binding_changed.connect(self._on_external_binding_changed)
+
+    def _on_external_binding_changed(self, action_id: str):
+        """Syncs card UI immediately when a binding is changed from another tab."""
+        if not self.input_mgr or not self.cards:
+            return
+        if not action_id:
+            self.populate_table()
+            return
+        if action_id in self.cards and action_id in self.input_mgr.bindings:
+            self.cards[action_id].update_binding_info(self.input_mgr.bindings[action_id])
+
 
     def _on_gamepad_state(self, slot, connected, pressed_buttons, lt, rt):
         """Passes live controller events to visualizer widget."""

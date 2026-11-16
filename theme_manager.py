@@ -403,10 +403,10 @@ LIGHT_STYLESHEET = """
         border: none;
         border-left: 3px solid transparent;
         border-radius: 4px;
-        padding: 7px 12px;
+        padding: 4px 10px;
         font-size: 12px;
         font-weight: 600;
-        min-height: 20px;
+        min-height: 16px;
     }
     QPushButton[isNav="true"]:hover:!checked {
         background-color: #e4e4e7;
@@ -693,10 +693,10 @@ DARK_STYLESHEET = """
         border: none;
         border-left: 3px solid transparent;
         border-radius: 4px;
-        padding: 7px 12px;
+        padding: 4px 10px;
         font-size: 12px;
         font-weight: 600;
-        min-height: 20px;
+        min-height: 16px;
     }
     QPushButton[isNav="true"]:hover:!checked {
         background-color: #27272a;

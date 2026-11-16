@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 import platform
 import datetime
 import re
@@ -141,4 +142,80 @@ def bundle_logs(overlay_app=None, target_dir=None) -> tuple:
     except Exception as e:
         print(f"Error saving bug report bundle: {e}")
 
+    write_support_bot_telemetry(overlay_app, target_dir=target_dir)
     return bundle_file, full_text
+
+
+def build_support_bot_telemetry(overlay_app=None) -> dict:
+    """
+    Generates a standardized v4.0 JSON telemetry payload for the Calyx Support Bot.
+    Ensures Beta and Early Access builds produce structured diagnostics ingestible by the bot.
+    """
+    monitors = []
+    try:
+        for i, s in enumerate(QApplication.screens()):
+            g = s.geometry()
+            monitors.append({
+                "index": i,
+                "width": g.width(),
+                "height": g.height(),
+                "x": g.x(),
+                "y": g.y(),
+                "dpr": round(float(s.devicePixelRatio()), 2),
+                "primary": (s == QApplication.primaryScreen()),
+            })
+    except Exception:
+        pass
+
+    ac_eng = getattr(overlay_app, "auto_clip_engine", None) if overlay_app else None
+    sb_eng = getattr(overlay_app, "soundboard_engine", None) if overlay_app else None
+    in_mgr = getattr(overlay_app, "input_manager", None) if overlay_app else None
+    active_hotkeys = 0
+    if in_mgr and hasattr(in_mgr, "bindings"):
+        active_hotkeys = sum(1 for b in in_mgr.bindings.values() if b.get("enabled") and b.get("binding"))
+
+    return {
+        "schema_version": "4.0",
+        "generated_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        "app": {
+            "version": get_full_version_string(),
+            "commit": get_build_commit(),
+            "update_channel": getattr(overlay_app, "update_channel", "stable") if overlay_app else "stable",
+            "frozen": getattr(sys, "frozen", False),
+        },
+        "environment": {
+            "os": f"{platform.system()} {platform.release()} ({platform.version()})",
+            "python": platform.python_version(),
+            "pyqt6": PYQT_VERSION_STR,
+            "vcredist": check_vcredist(),
+        },
+        "modes": {
+            "streamer_mode": bool(getattr(overlay_app, "streamer_mode", False)) if overlay_app else False,
+            "dpi_mode": getattr(overlay_app, "dpi_mode", "system") if overlay_app else "system",
+            "theme_preference": getattr(overlay_app, "theme_preference", "system") if overlay_app else "system",
+            "setup_wizard_completed": bool(getattr(overlay_app, "setup_wizard_completed", False)) if overlay_app else False,
+        },
+        "monitors": monitors,
+        "audio": {
+            "input_device": sanitize_text(getattr(ac_eng, "selected_device_name", "") or "") if ac_eng else "",
+            "input_gain": round(float(getattr(ac_eng, "input_gain", 1.0)), 2) if ac_eng else 1.0,
+            "output_device": sanitize_text(getattr(sb_eng, "selected_device_name", "") or "") if sb_eng else "",
+            "master_volume": round(float(getattr(sb_eng, "master_volume", 0.8)), 2) if sb_eng else 0.8,
+        },
+        "active_hotkeys_count": active_hotkeys,
+        "has_crash_log": os.path.exists(os.path.join(APP_DIR, "crash_log.txt")),
+    }
+
+
+def write_support_bot_telemetry(overlay_app=None, target_dir=None) -> str:
+    """Writes telemetry_report.json to disk and returns the file path."""
+    out_dir = target_dir or APP_DIR
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, "telemetry_report.json")
+    try:
+        payload = build_support_bot_telemetry(overlay_app)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+    except Exception:
+        pass
+    return out_path

@@ -366,6 +366,7 @@ class InputManager(QObject):
     """
     # High-level dispatch signals
     trigger_action = pyqtSignal(str) # action_id
+    binding_changed = pyqtSignal(str) # action_id (empty string = full reload)
 
     # Master Action Definitions
     ACTION_DEFINITIONS = [
@@ -507,6 +508,7 @@ class InputManager(QObject):
 
         # Update peripheral worker bindings
         self.worker.update_bindings(self.bindings)
+        self.binding_changed.emit("")
 
     def save_bindings_to_config(self, config_dict):
         """Serializes bindings back to the configuration dictionary."""
@@ -564,13 +566,27 @@ class InputManager(QObject):
 
         self._sync_keyboard_hooks()
         self.worker.update_bindings(self.bindings)
+        self.binding_changed.emit(action_id)
 
     def clear_binding(self, action_id):
         if action_id in self.bindings:
             self.bindings[action_id]["binding"] = ""
             self.bindings[action_id]["enabled"] = False
+            if action_id == "primary_overlay" and self.overlay:
+                if hasattr(self.overlay, "activation_hotkey"):
+                    self.overlay.activation_hotkey = ""
+                if hasattr(self.overlay, "primary_hotkey_enabled"):
+                    self.overlay.primary_hotkey_enabled = False
+            elif action_id.startswith("macro_") and self.overlay and hasattr(self.overlay, "twitch_macros"):
+                try:
+                    idx = int(action_id.split("_")[1])
+                    if idx < len(self.overlay.twitch_macros):
+                        self.overlay.twitch_macros[idx]["hotkey"] = ""
+                except Exception:
+                    pass
             self._sync_keyboard_hooks()
             self.worker.update_bindings(self.bindings)
+            self.binding_changed.emit(action_id)
 
     def check_conflict(self, new_device, new_binding, exclude_action_id=None):
         """Returns action definition dict if a conflict exists, otherwise None."""
