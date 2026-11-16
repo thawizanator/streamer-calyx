@@ -185,7 +185,7 @@ Streamer Calyx V4 expands from a Twitch-centric live overlay and remote director
 
 ---
 
-### Phase 9: Content Creator & Offline Production Suite
+### Phase 9: Content Creator & Offline Production Suite (`v4.0.0-alpha.2`) — *Completed*
 *Empower offline video creators, YouTubers, and podcasters with dedicated session logging.*
 
 - **9.1 Dual-Mode Operation (Streamer Mode vs. Content Creator Mode)**:

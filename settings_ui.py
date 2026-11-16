@@ -269,9 +269,20 @@ class MainTab(QWidget):
     def __init__(self, main_win):
         super().__init__()
         self.main_win = main_win
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        layout.setContentsMargins(14, 14, 14, 14)
+        root_lay = QVBoxLayout(self)
+        root_lay.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        root_lay.addWidget(scroll)
+
+        container = QWidget()
+        scroll.setWidget(container)
+        layout = QVBoxLayout(container)
+        layout.setSpacing(10)
+        layout.setContentsMargins(12, 10, 12, 10)
 
         # Group 1: Display & Overlay Mode
         grp_mode = QGroupBox("Display && Overlay Mode")
@@ -284,6 +295,13 @@ class MainTab(QWidget):
         self.chk_streamer.setChecked(getattr(self.main_win.overlay, "streamer_mode", False))
         self.chk_streamer.toggled.connect(self.on_streamer_toggled)
         lay_mode.addWidget(self.chk_streamer)
+
+        self.chk_content_creator = QCheckBox("Content Creator Mode (Offline Recording && Moments Log)")
+        self.chk_content_creator.setStyleSheet("font-weight: bold; font-size: 12.5px;")
+        self.chk_content_creator.setToolTip("Enable offline recording tools: unlocks Auto-Clip & timestamped Moments Logging without requiring Twitch live streaming.")
+        self.chk_content_creator.setChecked(getattr(self.main_win.overlay, "content_creator_mode", False))
+        self.chk_content_creator.toggled.connect(self.on_content_creator_toggled)
+        lay_mode.addWidget(self.chk_content_creator)
 
         self.lbl_mode_desc = QLabel()
         self.lbl_mode_desc.setWordWrap(True)
@@ -323,6 +341,41 @@ class MainTab(QWidget):
         lay_hk.addLayout(hk_btn_layout)
         layout.addWidget(grp_hk)
 
+        # Group 3: Content Creator Offline Moments Logger (Phase 9)
+        grp_moments = QGroupBox("📌 Offline Production && Recording Moments Logger")
+        lay_moments = QVBoxLayout(grp_moments)
+        lay_moments.setSpacing(6)
+
+        self.lbl_moment_hk = QLabel("Moment Bookmark Hotkey: <b>Not Set</b>")
+        self.lbl_moment_hk.setStyleSheet("font-size: 12px;")
+        lay_moments.addWidget(self.lbl_moment_hk)
+
+        row_mom_btns = QHBoxLayout()
+        self.btn_set_moment_hk = QPushButton("Set Bookmark Hotkey")
+        self.btn_set_moment_hk.setCheckable(True)
+        self.btn_set_moment_hk.setToolTip("Record a global hotkey to drop an instant timestamped bookmark into recording_moments.txt. Syncs with Hotkeys tab.")
+        self.main_win.setup_row_key_catcher(self.btn_set_moment_hk)
+        self.btn_set_moment_hk.clicked.connect(self.on_moment_hotkey_btn_clicked)
+        row_mom_btns.addWidget(self.btn_set_moment_hk)
+
+        self.btn_drop_moment = QPushButton("📌 Drop Moment Now")
+        self.btn_drop_moment.setToolTip("Manually log a timestamped moment bookmark right now.")
+        self.btn_drop_moment.clicked.connect(self._on_drop_moment_now)
+        row_mom_btns.addWidget(self.btn_drop_moment)
+
+        self.btn_open_moments = QPushButton("📂 Open Moments Log")
+        self.btn_open_moments.setToolTip("Open recording_moments.txt in your default text editor.")
+        self.btn_open_moments.clicked.connect(self._on_open_moments_log)
+        row_mom_btns.addWidget(self.btn_open_moments)
+
+        self.btn_reset_moments_clock = QPushButton("⏱️ Reset Clock")
+        self.btn_reset_moments_clock.setToolTip("Reset the recording session elapsed timer (T+00:00:00) for a new video.")
+        self.btn_reset_moments_clock.clicked.connect(self._on_reset_moments_clock)
+        row_mom_btns.addWidget(self.btn_reset_moments_clock)
+        lay_moments.addLayout(row_mom_btns)
+
+        layout.addWidget(grp_moments)
+
         layout.addStretch()
 
         self.lbl_hint = QLabel()
@@ -332,6 +385,7 @@ class MainTab(QWidget):
 
         self.refresh_theme_labels(theme_manager.get_effective_theme(getattr(self.main_win.overlay, "theme_preference", "system")))
         self.update_activation_hotkey_label()
+        self.update_moment_hotkey_label()
 
         input_mgr = getattr(self.main_win.overlay, "input_manager", None)
         if input_mgr and hasattr(input_mgr, "binding_changed"):
@@ -340,6 +394,8 @@ class MainTab(QWidget):
     def _on_input_binding_changed(self, action_id: str):
         if action_id in ("", "primary_overlay"):
             self.update_activation_hotkey_label()
+        if action_id in ("", "moment_bookmark"):
+            self.update_moment_hotkey_label()
 
     def refresh_theme_labels(self, effective):
         sec_color = theme_manager.get_secondary_text_color(effective)
@@ -371,6 +427,80 @@ class MainTab(QWidget):
             self.main_win.tab_director.set_streamer_mode(checked)
         if hasattr(self.main_win, "settings_window") and hasattr(self.main_win.settings_window, "update_streamer_mode_state"):
             self.main_win.settings_window.update_streamer_mode_state(checked)
+
+    def on_content_creator_toggled(self, checked):
+        if self.main_win.overlay:
+            if hasattr(self.main_win.overlay, "set_content_creator_mode"):
+                self.main_win.overlay.set_content_creator_mode(checked)
+            else:
+                self.main_win.overlay.content_creator_mode = bool(checked)
+                if hasattr(self.main_win.overlay, "save_settings"):
+                    self.main_win.overlay.save_settings()
+        is_streamer = getattr(self.main_win.overlay, "streamer_mode", False)
+        if hasattr(self.main_win, "update_streamer_mode_state"):
+            self.main_win.update_streamer_mode_state(is_streamer)
+
+    def update_moment_hotkey_label(self):
+        input_mgr = getattr(self.main_win.overlay, "input_manager", None)
+        formatted = "Not Set"
+        if input_mgr and "moment_bookmark" in input_mgr.bindings:
+            b = input_mgr.bindings["moment_bookmark"]
+            dev = b.get("device", "keyboard")
+            b_str = b.get("binding", "")
+            if b_str:
+                if dev == "gamepad":
+                    formatted = f"🎮 {b_str}"
+                elif dev == "mouse":
+                    formatted = f"🖱️ {b_str}"
+                else:
+                    formatted = format_hotkey_display(b_str)
+        self.lbl_moment_hk.setText(f"Moment Bookmark Hotkey: <b>{formatted}</b>")
+
+    def on_moment_hotkey_btn_clicked(self):
+        btn = self.btn_set_moment_hk
+        if btn.isChecked():
+            btn._original_text = "Set Bookmark Hotkey"
+            btn._recorded_keys = []
+            btn.setText("Press key(s)... (Click to Finish)")
+            btn.setStyleSheet("background-color: #3b2d54; color: #ffeb3b; font-weight: bold; padding: 4px; border: 2px solid #9146ff;")
+        else:
+            btn.setStyleSheet("")
+            recorded = getattr(btn, "_recorded_keys", [])
+            if recorded:
+                new_hk = normalize_hotkey("+".join(recorded))
+                input_mgr = getattr(self.main_win.overlay, "input_manager", None)
+                if input_mgr and new_hk:
+                    input_mgr.set_binding("moment_bookmark", "keyboard", new_hk, hold=0.0, enabled=True)
+                    if hasattr(self.main_win.overlay, "save_settings"):
+                        self.main_win.overlay.save_settings()
+            btn.setText("Set Bookmark Hotkey")
+            btn._recorded_keys = []
+            self.update_moment_hotkey_label()
+
+    def _on_drop_moment_now(self):
+        if self.main_win.overlay and hasattr(self.main_win.overlay, "log_manual_moment"):
+            entry = self.main_win.overlay.log_manual_moment("Manual Bookmark (UI Button)", source="Manual")
+            if entry:
+                self.lbl_moment_hk.setText(
+                    f"Moment Bookmark Logged: <span style='color: #22c55e;'><b>T+{entry['elapsed']}</b></span>"
+                )
+
+    def _on_open_moments_log(self):
+        logger = getattr(self.main_win.overlay, "moments_logger", None)
+        if logger:
+            if not os.path.exists(logger.txt_path):
+                with open(logger.txt_path, "w", encoding="utf-8") as f:
+                    f.write("# Streamer Calyx - Offline Production Moments Log\n")
+            try:
+                os.startfile(logger.txt_path)
+            except Exception:
+                pass
+
+    def _on_reset_moments_clock(self):
+        logger = getattr(self.main_win.overlay, "moments_logger", None)
+        if logger:
+            logger.reset_session()
+            self.lbl_moment_hk.setText("Session clock reset to <span style='color: #38bdf8;'><b>T+00:00:00</b></span>")
 
     def on_enable_primary_hk_toggled(self, checked):
         if hasattr(self.main_win.overlay, "set_primary_hotkey_enabled"):
@@ -2101,8 +2231,10 @@ class SettingsWindow(QWidget):
             """)
 
     def set_view_index(self, idx):
-        if idx == 10 and not getattr(self.overlay, "streamer_mode", False):
-            # Auto-Clip & Stream Markers is locked when Streamer Mode is disabled
+        is_streamer = getattr(self.overlay, "streamer_mode", False)
+        is_creator = getattr(self.overlay, "content_creator_mode", False)
+        if idx == 10 and not (is_streamer or is_creator):
+            # Auto-Clip & Stream Markers is locked when both Streamer Mode and Content Creator Mode are disabled
             return
         if 0 <= idx < self.stacked_pages.count():
             self.stacked_pages.setCurrentIndex(idx)
@@ -2121,8 +2253,10 @@ class SettingsWindow(QWidget):
                     self.combo_collapsed_nav.blockSignals(False)
 
     def update_streamer_mode_state(self, is_streamer_mode: bool):
-        """Updates UI tabs, buttons, and dropdown entries based on Streamer Mode status."""
+        """Updates UI tabs, buttons, and dropdown entries based on Streamer / Content Creator Mode status."""
         is_active = bool(is_streamer_mode)
+        is_creator = bool(getattr(self.overlay, "content_creator_mode", False))
+        autoclip_unlocked = is_active or is_creator
 
         # Propagate to DirectorTab
         if hasattr(self, "tab_director") and self.tab_director:
@@ -2130,20 +2264,20 @@ class SettingsWindow(QWidget):
 
         # Propagate to AutoClipTab
         if hasattr(self, "tab_autoclip") and self.tab_autoclip:
-            self.tab_autoclip.set_streamer_mode(is_active)
+            self.tab_autoclip.set_streamer_mode(autoclip_unlocked)
 
         # Update Auto-Clip sidebar navigation button
         if hasattr(self, "btn_nav_autoclip") and self.btn_nav_autoclip:
-            self.btn_nav_autoclip.setEnabled(is_active)
-            if is_active:
+            self.btn_nav_autoclip.setEnabled(autoclip_unlocked)
+            if autoclip_unlocked:
                 self.btn_nav_autoclip.setText("🎙️  Auto-Clip/Markers")
                 self.btn_nav_autoclip.setToolTip("")
             else:
                 self.btn_nav_autoclip.setText("🎙️  Auto-Clip/Markers 🔒")
-                self.btn_nav_autoclip.setToolTip("Locked: Auto-Clip & Stream Markers requires Streamer Mode to be enabled in Main settings.")
+                self.btn_nav_autoclip.setToolTip("Locked: Requires Streamer Mode or Content Creator Mode to be enabled in Main settings.")
 
-        # If currently on Auto-Clip tab and Streamer Mode is toggled off, bounce back to MainTab
-        if not is_active and self.stacked_pages.currentIndex() == 10:
+        # If currently on Auto-Clip tab and both modes are toggled off, bounce back to MainTab
+        if not autoclip_unlocked and self.stacked_pages.currentIndex() == 10:
             self.set_view_index(0)
 
         # Update collapsed combo box
@@ -2152,7 +2286,7 @@ class SettingsWindow(QWidget):
             if c_idx >= 0:
                 model = self.combo_collapsed_nav.model()
                 item = model.item(c_idx) if hasattr(model, "item") else None
-                if is_active:
+                if autoclip_unlocked:
                     self.combo_collapsed_nav.setItemText(c_idx, f"   {PAGE_TITLES.get(10, '🎙️  Auto-Clip & Stream Markers')}")
                     if item:
                         item.setEnabled(True)

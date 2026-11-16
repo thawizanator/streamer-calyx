@@ -399,6 +399,7 @@ class InputManager(QObject):
         {"id": "director_mute_7", "name": "Toggle Mute Audio 7", "category": "Stream Director", "default_key": ""},
         {"id": "director_mute_8", "name": "Toggle Mute Audio 8", "category": "Stream Director", "default_key": ""},
         {"id": "soundboard_stop_all", "name": "Soundboard Emergency Silence (Stop All)", "category": "Soundboard", "default_key": ""},
+        {"id": "moment_bookmark", "name": "Drop Recording Moment Bookmark", "category": "Content Creator", "default_key": ""},
     ]
 
     def __init__(self, overlay=None, parent=None):

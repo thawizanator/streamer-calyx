@@ -520,6 +520,8 @@ class RedBorderOverlay(QMainWindow):
         self._temp_alert_timer.setSingleShot(True)
         self._temp_alert_timer.timeout.connect(self._restore_from_temporary_alert)
         self._saved_overlay_state = None
+        from moments_logger import MomentsLogger
+        self.moments_logger = MomentsLogger(APP_DIR, parent=self)
         self.input_manager = InputManager(overlay=self, parent=self)
         self.input_manager.trigger_action.connect(self._handle_input_action)
         self.load_settings()
@@ -624,6 +626,7 @@ class RedBorderOverlay(QMainWindow):
         self.primary_hotkey_enabled = False
         self.start_on_boot = False
         self.streamer_mode = False
+        self.content_creator_mode = False
         self.debug_mode = False
         self.check_updates_on_startup = True
         self.auto_update_enabled = False
@@ -668,6 +671,7 @@ class RedBorderOverlay(QMainWindow):
                     self.primary_hotkey_enabled = d.get("primary_hotkey_enabled", False)
                     self.start_on_boot = d.get("start_on_boot", False)
                     self.streamer_mode = d.get("streamer_mode", False)
+                    self.content_creator_mode = d.get("content_creator_mode", False)
                     self.debug_mode = d.get("debug_mode", False)
                     self.check_updates_on_startup = d.get("check_updates_on_startup", True)
                     self.auto_update_enabled = d.get("auto_update_enabled", False)
@@ -736,6 +740,7 @@ class RedBorderOverlay(QMainWindow):
             "primary_hotkey_enabled": self.primary_hotkey_enabled,
             "start_on_boot": self.start_on_boot,
             "streamer_mode": self.streamer_mode,
+            "content_creator_mode": getattr(self, "content_creator_mode", False),
             "debug_mode": self.debug_mode,
             "check_updates_on_startup": self.check_updates_on_startup,
             "auto_update_enabled": self.auto_update_enabled,
@@ -800,9 +805,16 @@ class RedBorderOverlay(QMainWindow):
     def set_streamer_mode(self, enabled):
         self.streamer_mode = bool(enabled)
         if hasattr(self, "auto_clip_engine") and self.auto_clip_engine:
-            self.auto_clip_engine.set_streamer_mode(self.streamer_mode)
+            self.auto_clip_engine.set_streamer_mode(self.streamer_mode or getattr(self, "content_creator_mode", False))
         self.save_settings()
         log_debug("SYSTEM", f"Streamer mode toggled: {'ENABLED' if self.streamer_mode else 'DISABLED'}")
+
+    def set_content_creator_mode(self, enabled):
+        self.content_creator_mode = bool(enabled)
+        if hasattr(self, "auto_clip_engine") and self.auto_clip_engine:
+            self.auto_clip_engine.set_streamer_mode(getattr(self, "streamer_mode", False) or self.content_creator_mode)
+        self.save_settings()
+        log_debug("SYSTEM", f"Content Creator mode toggled: {'ENABLED' if self.content_creator_mode else 'DISABLED'}")
 
     def set_debug_mode(self, enabled):
         self.debug_mode = bool(enabled)
@@ -1077,6 +1089,18 @@ class RedBorderOverlay(QMainWindow):
             if hasattr(self, "soundboard_engine") and self.soundboard_engine:
                 self.soundboard_engine.toggle_clip(clip_id)
                 log_debug("SOUNDBOARD", f"Toggled soundboard clip {clip_id} via hotkey/peripheral")
+        elif action_id == "moment_bookmark":
+            self.log_manual_moment("Manual Moment Bookmark", source="Hotkey")
+
+    def log_manual_moment(self, description: str = "Manual Moment Bookmark", source: str = "Hotkey"):
+        if hasattr(self, "moments_logger") and self.moments_logger:
+            entry = self.moments_logger.log_moment(description=description, source=source)
+            try:
+                self.flash_temporary_alert(duration_ms=700, color=QColor("#10b981"))
+            except Exception:
+                pass
+            return entry
+        return None
 
     def evaluate_macro_trigger(self, slot_index):
         if slot_index >= len(self.twitch_macros): return
@@ -1169,10 +1193,14 @@ class RedBorderOverlay(QMainWindow):
         if flash_overlay:
             self.flash_temporary_alert(duration_ms=1500, color=QColor(alert_color))
 
-        # 3. Drop Twitch Stream Marker
+        # 3. Drop Twitch Stream Marker (if Streamer Mode & Twitch connected)
         if self.twitch_token and self.twitch_channel:
             log_debug("AUTOCLIP", f"Dropping Twitch Stream Marker: '{desc}' on channel '{self.twitch_channel}'")
             self.dispatch_twitch_call("/marker", desc)
+
+        # 3b. Log Offline Production Moment (if Content Creator Mode enabled)
+        if getattr(self, "content_creator_mode", False) and hasattr(self, "moments_logger") and self.moments_logger:
+            self.moments_logger.log_moment(description=f"Auto-Clip Peak ({desc})", source="Auto-Clip")
 
         # 4. Display In-Game HUD Toast notification
         ts_str = payload.get("timestamp_str", "")

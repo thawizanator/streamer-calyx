@@ -32,6 +32,7 @@ hidden_imports = [
     'audio_tab',
     'setup_wizard',
     'context_help',
+    'moments_logger',
     'about_tab',
     'stream_launch_tab',
     'logs_tab',

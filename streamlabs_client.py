@@ -33,6 +33,7 @@ class StreamlabsClient(QObject):
     source_updated = pyqtSignal(dict)              # source event dict
     source_visibility_changed = pyqtSignal(str, bool) # (source_name_or_id, is_visible)
     streaming_status_changed = pyqtSignal(str)        # "live", "offline", "starting", "ending"
+    recording_status_changed = pyqtSignal(str)        # "recording", "offline", "starting", "stopping"
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -285,6 +286,7 @@ class StreamlabsClient(QObject):
             ("audioSourceUpdated", "AudioService"),
             ("itemUpdated", "ScenesService"),
             ("streamingStatusChange", "StreamingService"),
+            ("recordingStatusChange", "StreamingService"),
         ]
 
         for method, resource in events:
@@ -404,6 +406,7 @@ class StreamlabsClient(QObject):
             ("audioSourceUpdated", "AudioService"),
             ("itemUpdated", "ScenesService"),
             ("streamingStatusChange", "StreamingService"),
+            ("recordingStatusChange", "StreamingService"),
         ]
 
         for method, resource in events:
@@ -591,6 +594,18 @@ class StreamlabsClient(QObject):
                 self._streaming_status = status
                 self.streaming_status_changed.emit(status)
 
+        # 5. Recording Status Changed (recording, offline, starting, stopping)
+        elif "recordingStatusChange" in res_id:
+            status = ""
+            if isinstance(data, str):
+                status = data.lower()
+            elif isinstance(data, dict):
+                status = str(data.get("recordingStatus", "")).lower()
+            log_debug("SLOBS", f"EVENT: Recording Status Changed -> '{status}'")
+            if status:
+                self._recording_status = status
+                self.recording_status_changed.emit(status)
+
     def get_streaming_status(self) -> str:
         """
         Queries Streamlabs StreamingService.getModel for live broadcast status.
@@ -612,6 +627,43 @@ class StreamlabsClient(QObject):
         """Returns True if Streamlabs is currently actively broadcasting live."""
         status = self.get_streaming_status()
         return status in ["live", "starting"]
+
+    def get_recording_status(self) -> str:
+        """
+        Queries Streamlabs StreamingService.getModel for local recording status.
+        Returns 'recording', 'offline', 'starting', 'stopping', or 'unknown'.
+        """
+        if self._mode == "webrtc_client":
+            return getattr(self, "_recording_status", "offline")
+        if self.is_connected():
+            try:
+                res = self._call_rpc("getModel", "StreamingService")
+                if isinstance(res, dict):
+                    status = str(res.get("recordingStatus", "")).lower()
+                    if status:
+                        self._recording_status = status
+                        return status
+            except Exception as e:
+                log_debug("SLOBS", f"Error querying recordingStatus: {e}")
+        return getattr(self, "_recording_status", "offline")
+
+    def is_recording(self) -> bool:
+        """Returns True if Streamlabs/OBS is currently actively recording."""
+        return self.get_recording_status() in ["recording", "starting"]
+
+    def toggle_recording(self) -> bool:
+        """Toggles local recording on Streamlabs Desktop or via WebRTC P2P."""
+        if self._mode == "webrtc_client" and hasattr(self, "_webrtc_sender") and self._webrtc_sender:
+            self._webrtc_sender({"action": "TOGGLE_RECORDING"})
+            return True
+        if self.is_connected():
+            try:
+                self._call_rpc("toggleRecording", "StreamingService")
+                log_debug("SLOBS", "Dispatched toggleRecording to StreamingService.")
+                return True
+            except Exception as e:
+                log_debug("SLOBS", f"Error toggling recording: {e}")
+        return False
 
     def _check_watchdog(self):
         """Watchdog checks if connection is alive; if not, attempts reconnect."""

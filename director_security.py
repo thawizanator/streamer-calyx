@@ -181,7 +181,10 @@ class BouncerValidator:
             return False, "Action must be a string", None
 
         action = action.upper().strip()
-        allowed_actions = {"SWITCH_SCENE", "TOGGLE_MUTE", "SET_VOLUME", "REQUEST_STATE", "PING", "SET_VISIBILITY", "PLAY_SOUND", "STOP_ALL"}
+        allowed_actions = {
+            "SWITCH_SCENE", "TOGGLE_MUTE", "SET_VOLUME", "REQUEST_STATE",
+            "PING", "SET_VISIBILITY", "PLAY_SOUND", "STOP_ALL", "TOGGLE_RECORDING"
+        }
         if action not in allowed_actions:
             log_debug("BOUNCER", f"Unauthorized action rejected: '{action}' from {peer_id}")
             return False, f"Action '{action}' is not allowed", None
@@ -189,6 +192,17 @@ class BouncerValidator:
         # REQUEST_STATE, PING, and STOP_ALL require no target
         if action in {"REQUEST_STATE", "PING", "STOP_ALL"}:
             return True, "Valid", {"action": action}
+
+        # TOGGLE_RECORDING requires explicit allow_recording_control or full_control
+        if action == "TOGGLE_RECORDING":
+            username = self._peer_usernames.get(peer_id, "")
+            user_perm = self._lookup_user_perm(username) if username else {}
+            full_control = user_perm.get("full_control", False) if user_perm else (not self.user_permissions)
+            if not full_control:
+                if not user_perm or not user_perm.get("allow_recording_control", False):
+                    log_debug("BOUNCER", f"Permission denied: @{username} is not permitted to control recording")
+                    return False, f"Permission denied: user @{username} does not have recording control permissions", None
+            return True, "Valid", {"action": action, "user": username or peer_id}
 
         # PLAY_SOUND requires clip_id or target
         if action == "PLAY_SOUND":

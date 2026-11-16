@@ -1198,6 +1198,8 @@ class DirectorPanelWindow(QWidget):
         self.slobs_client.disconnected.connect(self._on_slobs_disconnected)
         self.slobs_client.scene_switched.connect(self._on_slobs_scene_switched)
         self.slobs_client.audio_muted_changed.connect(self._on_slobs_audio_muted_changed)
+        if hasattr(self.slobs_client, "recording_status_changed"):
+            self.slobs_client.recording_status_changed.connect(self.update_recording_state)
         self.slobs_client.audio_volume_changed.connect(self._on_slobs_audio_volume_changed)
         self.slobs_client.source_visibility_changed.connect(self._on_slobs_source_visibility_changed)
 
@@ -1247,6 +1249,34 @@ class DirectorPanelWindow(QWidget):
         """)
         self.btn_soundboard.clicked.connect(self._toggle_soundboard_deck)
         top_bar.addWidget(self.btn_soundboard)
+
+        self.btn_record = QPushButton("⏺️ Rec")
+        self.btn_record.setFixedHeight(20)
+        self.btn_record.setMinimumWidth(52)
+        self.btn_record.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_record.setToolTip("Start / Stop OBS or Streamlabs local recording (requires streamer permission)")
+        self.btn_record.setStyleSheet("""
+            QPushButton {
+                background: #27272a;
+                color: #f43f5e;
+                border: 1px solid #3f3f46;
+                border-radius: 10px;
+                font-size: 10px;
+                font-weight: bold;
+                padding: 0 6px;
+            }
+            QPushButton:hover {
+                background: #e11d48;
+                color: #ffffff;
+                border-color: #f43f5e;
+            }
+            QPushButton:disabled {
+                color: #71717a;
+                border-color: #27272a;
+            }
+        """)
+        self.btn_record.clicked.connect(self._on_record_clicked)
+        top_bar.addWidget(self.btn_record)
 
         self.btn_resync = QPushButton("🔄")
         self.btn_resync.setFixedSize(20, 20)
@@ -1550,6 +1580,65 @@ class DirectorPanelWindow(QWidget):
         for f in self.volume_faders:
             permitted = self.is_volume_permitted(f.fader_name)
             f.set_locked(not permitted)
+
+    def is_recording_permitted(self) -> bool:
+        """Checks if remote/local director is permitted to toggle recording."""
+        if not self._last_permissions or self._last_permissions.get("full_control", False):
+            return True
+        return bool(self._last_permissions.get("allow_recording_control", False))
+
+    def update_recording_state(self, status: str):
+        """Updates the top-bar recording button text/style and permission lock."""
+        if not hasattr(self, "btn_record"):
+            return
+        permitted = self.is_recording_permitted()
+        is_rec = str(status or "").lower() in ("recording", "starting")
+        if not permitted:
+            self.btn_record.setEnabled(False)
+            self.btn_record.setText("⏺️ 🔒" if not is_rec else "⏹️ REC 🔒")
+            self.btn_record.setToolTip("🔒 Locked: Recording control permission not granted by Streamer")
+        else:
+            self.btn_record.setEnabled(True)
+            if is_rec:
+                self.btn_record.setText("⏹️ REC")
+                self.btn_record.setToolTip("Recording active! Click to stop recording.")
+                self.btn_record.setStyleSheet("""
+                    QPushButton {
+                        background: #991b1b;
+                        color: #ffffff;
+                        border: 1px solid #ef4444;
+                        border-radius: 10px;
+                        font-size: 10px;
+                        font-weight: bold;
+                        padding: 0 6px;
+                    }
+                    QPushButton:hover { background: #dc2626; }
+                """)
+            else:
+                self.btn_record.setText("⏺️ Rec")
+                self.btn_record.setToolTip("Start / Stop OBS or Streamlabs local recording")
+                self.btn_record.setStyleSheet("""
+                    QPushButton {
+                        background: #27272a;
+                        color: #f43f5e;
+                        border: 1px solid #3f3f46;
+                        border-radius: 10px;
+                        font-size: 10px;
+                        font-weight: bold;
+                        padding: 0 6px;
+                    }
+                    QPushButton:hover {
+                        background: #e11d48;
+                        color: #ffffff;
+                        border-color: #f43f5e;
+                    }
+                """)
+
+    def _on_record_clicked(self):
+        if not self.is_recording_permitted():
+            return
+        if hasattr(self, "slobs_client") and self.slobs_client:
+            self.slobs_client.toggle_recording()
 
     def add_scene_slot(self):
         """Adds another scene card slot (up to 8) populated from pool_scenes."""
@@ -2080,6 +2169,8 @@ class DirectorPanelWindow(QWidget):
         self.re_evaluate_scene_states()
         self.re_evaluate_audio_states()
         self.re_evaluate_volume_states()
+        rec_st = self.slobs_client.get_recording_status() if hasattr(self, "slobs_client") and self.slobs_client else "offline"
+        self.update_recording_state(rec_st)
 
         # 5. Calculate stable dock width across all scenes to prevent resizing jerks
         self._update_stable_dock_width()

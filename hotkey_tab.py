@@ -44,6 +44,8 @@ ACTION_DESCRIPTIONS = {
     "director_mute_6": "Toggles mute / unmute on Audio Source 6.",
     "director_mute_7": "Toggles mute / unmute on Audio Source 7.",
     "director_mute_8": "Toggles mute / unmute on Audio Source 8.",
+    "soundboard_stop_all": "Immediately silences all currently playing Soundboard clips.",
+    "moment_bookmark": "Drops an instant timestamped bookmark into recording_moments.txt / .json for offline editing.",
 }
 
 
@@ -685,6 +687,8 @@ class HotkeysTab(QWidget):
         self.combo_filter.addItems([
             "All Categories",
             "Alerts & Highlights",
+            "Content Creator",
+            "Soundboard",
             "Twitch Macros",
             "Stream Timing",
             "Trivia & Text",

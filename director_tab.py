@@ -1644,6 +1644,17 @@ class DirectorTab(QWidget):
         self.chk_perm_soundboard.toggled.connect(self._on_granular_perm_changed)
         self.lay_matrix_items.addWidget(self.chk_perm_soundboard)
 
+        # 5. RECORDING CONTROL PERMISSIONS (Phase 9.4)
+        lbl_sec_rec = QLabel("⏺️ Recording Control Permissions")
+        lbl_sec_rec.setStyleSheet("color: #f43f5e; font-weight: bold; font-size: 11px; padding-top: 6px;")
+        self.lay_matrix_items.addWidget(lbl_sec_rec)
+
+        self.chk_perm_recording = QCheckBox("Allow Start / Stop Recording")
+        self.chk_perm_recording.setStyleSheet("margin-left: 14px; font-size: 11px;")
+        self.chk_perm_recording.setToolTip("Grants this co-host permission to start or stop OBS/SLOBS recording from their Director dock.")
+        self.chk_perm_recording.toggled.connect(self._on_granular_perm_changed)
+        self.lay_matrix_items.addWidget(self.chk_perm_recording)
+
         self.lay_matrix_items.addStretch()
         self._load_selected_cohost_permissions()
 
@@ -1672,6 +1683,9 @@ class DirectorTab(QWidget):
             if hasattr(self, "chk_perm_soundboard"):
                 self.chk_perm_soundboard.setChecked(False)
                 self.chk_perm_soundboard.setEnabled(False)
+            if hasattr(self, "chk_perm_recording"):
+                self.chk_perm_recording.setChecked(False)
+                self.chk_perm_recording.setEnabled(False)
             self._updating_perm_ui = False
             return
 
@@ -1717,6 +1731,14 @@ class DirectorTab(QWidget):
                 else "margin-left: 14px; font-size: 11px; color: #efeff1;"
             )
 
+        if hasattr(self, "chk_perm_recording"):
+            self.chk_perm_recording.setChecked(is_full or perm.get("allow_recording_control", False))
+            self.chk_perm_recording.setEnabled(not is_full)
+            self.chk_perm_recording.setStyleSheet(
+                "margin-left: 14px; font-size: 11px; color: #a1a1aa;" if is_full
+                else "margin-left: 14px; font-size: 11px; color: #efeff1;"
+            )
+
         self._updating_perm_ui = False
 
     def _on_full_control_toggled(self, checked: bool):
@@ -1739,6 +1761,8 @@ class DirectorTab(QWidget):
             ]
             if hasattr(self, "chk_perm_soundboard"):
                 self.user_permissions[user]["allow_soundboard"] = self.chk_perm_soundboard.isChecked()
+            if hasattr(self, "chk_perm_recording"):
+                self.user_permissions[user]["allow_recording_control"] = self.chk_perm_recording.isChecked()
         else:
             self._updating_perm_ui = True
             for chk in self.perm_scene_checkboxes.values():
@@ -1749,11 +1773,14 @@ class DirectorTab(QWidget):
                 chk.setChecked(True)
             if hasattr(self, "chk_perm_soundboard"):
                 self.chk_perm_soundboard.setChecked(True)
+            if hasattr(self, "chk_perm_recording"):
+                self.chk_perm_recording.setChecked(True)
             self._updating_perm_ui = False
             self.user_permissions[user]["allowed_scenes"] = list(self.perm_scene_checkboxes.keys())
             self.user_permissions[user]["allowed_audio_mutes"] = list(self.perm_mute_checkboxes.keys())
             self.user_permissions[user]["allowed_audio_volume"] = list(self.perm_vol_checkboxes.keys())
             self.user_permissions[user]["allow_soundboard"] = True
+            self.user_permissions[user]["allow_recording_control"] = True
 
         self._load_selected_cohost_permissions()
         self._sync_permissions_file()
@@ -1773,17 +1800,19 @@ class DirectorTab(QWidget):
         allowed_mu = [a for a, chk in self.perm_mute_checkboxes.items() if chk.isChecked()]
         allowed_vo = [v for v, chk in self.perm_vol_checkboxes.items() if chk.isChecked()]
         allow_sb = self.chk_perm_soundboard.isChecked() if hasattr(self, "chk_perm_soundboard") else True
+        allow_rec = self.chk_perm_recording.isChecked() if hasattr(self, "chk_perm_recording") else False
 
         self.user_permissions[user]["allowed_scenes"] = allowed_sc
         self.user_permissions[user]["allowed_audio_mutes"] = allowed_mu
         self.user_permissions[user]["allowed_audio_volume"] = allowed_vo
         self.user_permissions[user]["allow_soundboard"] = allow_sb
+        self.user_permissions[user]["allow_recording_control"] = allow_rec
 
         all_scenes_checked = (len(allowed_sc) == len(self.perm_scene_checkboxes)) if self.perm_scene_checkboxes else True
         all_mutes_checked = (len(allowed_mu) == len(self.perm_mute_checkboxes)) if self.perm_mute_checkboxes else True
         all_vols_checked = (len(allowed_vo) == len(self.perm_vol_checkboxes)) if self.perm_vol_checkboxes else True
 
-        if not (all_scenes_checked and all_mutes_checked and all_vols_checked and allow_sb):
+        if not (all_scenes_checked and all_mutes_checked and all_vols_checked and allow_sb and allow_rec):
             self.user_permissions[user]["full_control"] = False
             self._updating_perm_ui = True
             if hasattr(self, "chk_perm_full"):
@@ -3169,6 +3198,12 @@ class DirectorTab(QWidget):
             engine = self.soundboard_engine
             if engine:
                 engine.stop_all()
+        elif cmd_act == "TOGGLE_RECORDING":
+            user = sanitized.get("user") or client_id
+            log_debug("HOST_BOUNCER", f"Executing validated TOGGLE_RECORDING from {user}")
+            if self.slobs_client:
+                self.slobs_client.toggle_recording()
+                QTimer.singleShot(300, self._broadcast_host_state_update)
         elif cmd_act == "REQUEST_STATE":
             log_debug("HOST_BOUNCER", f"Executing validated REQUEST_STATE from client {client_id}")
             self._broadcast_host_state_update()
@@ -3217,6 +3252,7 @@ class DirectorTab(QWidget):
                     "Legal-View": self.slobs_client.get_source_visibility("Legal-View"),
                     "SandMan View": self.slobs_client.get_source_visibility("SandMan View"),
                 },
+                "recording_status": self.slobs_client.get_recording_status(),
                 "user_permissions": self.user_permissions
             }
             if self.bouncer:
@@ -3369,6 +3405,12 @@ class DirectorTab(QWidget):
                 for v_name, vis in view_toggles.items():
                     if v_name in self.panel_window.view_toggle_buttons:
                         self.panel_window.view_toggle_buttons[v_name].set_visibility_state(vis)
+
+            rec_status = state.get("recording_status")
+            if rec_status and hasattr(self.slobs_client, "_recording_status"):
+                self.slobs_client._recording_status = rec_status
+            if hasattr(self.panel_window, "update_recording_state"):
+                self.panel_window.update_recording_state(rec_status or "offline")
 
         self._update_slobs_status_ui()
 
