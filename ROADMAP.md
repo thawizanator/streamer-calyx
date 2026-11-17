@@ -7,7 +7,7 @@ Welcome to the development roadmap for **Streamer Calyx** (formerly *HotKey Over
 ## 🧭 Release Architecture & Branches
 
 - **`main` Branch**: Tracks stable production releases (currently **`v3.0.2`**).
-- **`develop` Branch**: Tracks active feature branches, updates, and previews (currently **`v4.0.0-dev`**).
+- **`develop` Branch**: Tracks active feature branches, updates, and previews (currently **`v4.0.0-beta.1`**).
 
 ---
 
@@ -185,7 +185,7 @@ Streamer Calyx V4 expands from a Twitch-centric live overlay and remote director
 
 ---
 
-### Phase 9: Content Creator & Offline Production Suite (`v4.0.0-alpha.2`) — *Completed*
+### Phase 9: Content Creator & Offline Production Suite (`v4.0.0-beta.1`) — *Completed*
 *Empower offline video creators, YouTubers, and podcasters with dedicated session logging.*
 
 - **9.1 Dual-Mode Operation (Streamer Mode vs. Content Creator Mode)**:
