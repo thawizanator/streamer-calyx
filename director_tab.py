@@ -1984,7 +1984,9 @@ class DirectorTab(QWidget):
             return
 
         if self.slobs_client and self.slobs_client.is_connected():
-            _, act_name = self.slobs_client.get_active_scene_info()
+            act_name = getattr(self.slobs_client, "_active_scene_name", "") or ""
+            if not act_name:
+                _, act_name = self.slobs_client.get_active_scene_info()
             if act_name and len(act_name) > 18:
                 act_name = act_name[:16] + "..."
             act_str = f" — Active: <b>{act_name}</b>" if act_name else ""

@@ -1,5 +1,6 @@
 import sys
 import time
+import threading
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QTimer
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -1188,6 +1189,12 @@ class DirectorPanelWindow(QWidget):
         self._temp_scene_seconds_remaining = 0
         self._temp_scene_timer = None
         self.banner_temp_scene = None
+        self._last_local_scene_click_ts = 0.0
+        self._pending_scene_target = None
+        self._scene_switch_timer = QTimer(self)
+        self._scene_switch_timer.setSingleShot(True)
+        self._scene_switch_timer.setInterval(80)
+        self._scene_switch_timer.timeout.connect(self._dispatch_pending_scene_switch)
 
         self._build_ui()
 
@@ -2203,6 +2210,7 @@ class DirectorPanelWindow(QWidget):
 
     def _on_scene_clicked(self, scene_id, name, btn):
         self.active_scene_index = scene_id
+        self._last_local_scene_click_ts = time.time()
         for b in self.scene_buttons:
             b.set_active(b == btn)
         self.reflow_for_active_scene(name, getattr(btn, "scene_raw_id", ""))
@@ -2211,7 +2219,17 @@ class DirectorPanelWindow(QWidget):
         if getattr(self, "client_webrtc", None) and self.client_webrtc.isRunning():
             self.client_webrtc.send_command("SWITCH_SCENE", target=name)
         elif hasattr(self, "slobs_client") and self.slobs_client and self.slobs_client.is_connected():
-            self.slobs_client.make_scene_active(target)
+            self._pending_scene_target = target
+            self._scene_switch_timer.start()
+
+    def _dispatch_pending_scene_switch(self):
+        target = getattr(self, "_pending_scene_target", None)
+        if not target:
+            return
+        self._pending_scene_target = None
+        client = getattr(self, "slobs_client", None)
+        if client and client.is_connected():
+            threading.Thread(target=client.make_scene_active, args=(target,), daemon=True).start()
 
     def _on_audio_toggled(self, aid, name, is_muted):
         self.audio_toggled.emit(aid, name, is_muted)
@@ -2629,6 +2647,14 @@ class DirectorPanelWindow(QWidget):
             self.lbl_status.setText("<span style='color: #ef4444;'>● Disconnected</span>")
 
     def _on_slobs_scene_switched(self, scene_id, scene_name):
+        # Ignore stale/delayed SLOBS pipe echoes shortly after a local rapid scene click
+        if (time.time() - getattr(self, "_last_local_scene_click_ts", 0.0)) < 1.5:
+            cur_id = (getattr(self, "_active_scene_id", "") or "").strip().lower()
+            cur_name = (getattr(self, "_active_scene_name", "") or "").strip().lower()
+            ev_id = (scene_id or "").strip().lower()
+            ev_name = (scene_name or "").strip().lower()
+            if (ev_id and cur_id and ev_id != cur_id) or (ev_name and cur_name and ev_name != cur_name):
+                return
         self._active_scene_id = scene_id or ""
         self._active_scene_name = scene_name or ""
         target = (scene_name or "").strip().lower()
