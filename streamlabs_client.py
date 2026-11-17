@@ -34,6 +34,7 @@ class StreamlabsClient(QObject):
     source_visibility_changed = pyqtSignal(str, bool) # (source_name_or_id, is_visible)
     streaming_status_changed = pyqtSignal(str)        # "live", "offline", "starting", "ending"
     recording_status_changed = pyqtSignal(str)        # "recording", "offline", "starting", "stopping"
+    _refresh_scene_items_signal = pyqtSignal()
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -70,6 +71,13 @@ class StreamlabsClient(QObject):
         self._watchdog.setInterval(3000)
         self._watchdog.timeout.connect(self._check_watchdog)
         self._watchdog.start()
+
+        # Debounced scene items refresh (avoids blocking _on_ws_text_message / event loop)
+        self._scene_items_refresh_timer = QTimer(self)
+        self._scene_items_refresh_timer.setSingleShot(True)
+        self._scene_items_refresh_timer.setInterval(150)
+        self._scene_items_refresh_timer.timeout.connect(self.fetch_active_scene_items)
+        self._refresh_scene_items_signal.connect(self._scene_items_refresh_timer.start)
 
     def configure_connection(self, mode: str = "local", host: str = "127.0.0.1", port: int = 59650, token: str = ""):
         """Configures transport mode and target parameters."""
@@ -488,6 +496,22 @@ class StreamlabsClient(QObject):
         self._req_counter += 1
         return self._req_counter
 
+    def _call_rpc_ws_async(self, method: str, resource: str, args: Optional[list] = None) -> bool:
+        """Fire-and-forget WebSocket JSON-RPC send without spinning a blocking QEventLoop."""
+        if not self._ws or not self._ws.isValid():
+            return False
+        req_id = self._next_id()
+        payload = {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "method": method,
+            "params": {"resource": resource}
+        }
+        if args is not None:
+            payload["params"]["args"] = args
+        self._ws.sendTextMessage(json.dumps(payload))
+        return True
+
     def _call_rpc(self, method: str, resource: str, args: Optional[list] = None) -> Optional[Any]:
         if self._mode == "remote":
             return self._call_rpc_ws(method, resource, args)
@@ -543,8 +567,8 @@ class StreamlabsClient(QObject):
             self._active_scene_id = sc_id
             self._active_scene_name = sc_name
             log_debug("SLOBS", f"EVENT: Scene Switched -> '{sc_name}' ({sc_id})")
-            # Refresh scene items for newly active scene
-            self.fetch_active_scene_items()
+            # Schedule debounced scene items refresh outside event handler
+            self._refresh_scene_items_signal.emit()
             self.scene_switched.emit(sc_id, sc_name)
 
         # 2. Source Updated (Mute or properties)
@@ -797,6 +821,8 @@ class StreamlabsClient(QObject):
                 break
 
         log_debug("SLOBS", f"Switching live scene to target ID '{target_id}'...")
+        if self._mode == "remote":
+            return self._call_rpc_ws_async("makeSceneActive", "ScenesService", [target_id])
         res = self._call_rpc("makeSceneActive", "ScenesService", [target_id])
         return res is not None
 
