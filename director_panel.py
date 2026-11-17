@@ -2229,7 +2229,11 @@ class DirectorPanelWindow(QWidget):
         self._pending_scene_target = None
         client = getattr(self, "slobs_client", None)
         if client and client.is_connected():
-            threading.Thread(target=client.make_scene_active, args=(target,), daemon=True).start()
+            # QWebSocket ("remote") has main-thread affinity; Named Pipe ("local") can run async
+            if getattr(client, "_mode", "local") == "remote":
+                client.make_scene_active(target)
+            else:
+                threading.Thread(target=client.make_scene_active, args=(target,), daemon=True).start()
 
     def _on_audio_toggled(self, aid, name, is_muted):
         self.audio_toggled.emit(aid, name, is_muted)
