@@ -1289,24 +1289,25 @@ class RedBorderOverlay(QMainWindow):
         if 0 <= idx < len(screens):
             screen = screens[idx]
             geom = screen.geometry()
-            self.winId()
-            if self.windowHandle():
-                self.windowHandle().setScreen(screen)
             self.setGeometry(geom)
-            if sys.platform == "win32":
-                try:
-                    import ctypes
-                    hwnd = int(self.winId())
-                    # HWND_TOPMOST = -1, SWP_NOACTIVATE = 0x0010
-                    # Explicitly pass exact monitor coordinates and dimensions to Win32 SetWindowPos
-                    ctypes.windll.user32.SetWindowPos(
-                        hwnd, -1,
-                        geom.x(), geom.y(), geom.width(), geom.height(),
-                        0x0010
-                    )
-                except Exception as e:
-                    log_debug("OVERLAY", f"SetWindowPos geometry error: {e}")
-            self.update()
+            if self.isVisible():
+                self.winId()
+                if self.windowHandle():
+                    self.windowHandle().setScreen(screen)
+                if sys.platform == "win32":
+                    try:
+                        import ctypes
+                        hwnd = int(self.winId())
+                        # HWND_TOPMOST = -1, SWP_NOACTIVATE = 0x0010
+                        # Explicitly pass exact monitor coordinates and dimensions to Win32 SetWindowPos
+                        ctypes.windll.user32.SetWindowPos(
+                            hwnd, -1,
+                            geom.x(), geom.y(), geom.width(), geom.height(),
+                            0x0010
+                        )
+                    except Exception as e:
+                        log_debug("OVERLAY", f"SetWindowPos geometry error: {e}")
+                self.update()
             log_debug("OVERLAY", f"Updated monitor #{idx+1} geometry to ({geom.x()},{geom.y()},{geom.width()}x{geom.height()}) on screen '{screen.name()}'")
 
     def identify_monitors(self):
