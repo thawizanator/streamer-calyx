@@ -1698,24 +1698,31 @@ class DirectorPanelWindow(QWidget):
                 """)
 
     def _on_video_feed_toggled(self, checked: bool):
-        if not hasattr(self, "video_feed_container"):
-            self.video_feed_container = QWidget(self)
-            lay_vf = QVBoxLayout(self.video_feed_container)
-            lay_vf.setContentsMargins(0, 2, 0, 2)
-            lay_vf.setSpacing(3)
+        if not hasattr(self, "video_feed_window"):
+            win = QWidget(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+            win.setObjectName("LANVideoFeedWindow")
+            win.setStyleSheet("QWidget#LANVideoFeedWindow { background-color: #121216; border: 2px solid #0284c7; border-radius: 8px; }")
+            lay_vf = QVBoxLayout(win)
+            lay_vf.setContentsMargins(6, 6, 6, 6)
+            lay_vf.setSpacing(4)
 
             row_sz = QHBoxLayout()
             row_sz.setSpacing(4)
-            lbl_sz = QLabel("Preview Size:")
-            lbl_sz.setStyleSheet("color: #a1a1aa; font-size: 9px;")
-            row_sz.addWidget(lbl_sz)
+            lbl_hdr = QLabel("📺 LAN Live Feed")
+            lbl_hdr.setStyleSheet("color: #38bdf8; font-size: 10px; font-weight: bold;")
+            row_sz.addWidget(lbl_hdr)
+            row_sz.addStretch()
             for tag, (pw, ph) in [("S", (240, 135)), ("M", (360, 202)), ("L", (480, 270)), ("XL", (640, 360))]:
                 b_sz = QPushButton(tag)
-                b_sz.setFixedSize(24, 16)
-                b_sz.setStyleSheet("QPushButton { background: #27272a; color: #e4e4e7; border: 1px solid #3f3f46; border-radius: 3px; font-size: 9px; } QPushButton:hover { border-color: #38bdf8; }")
+                b_sz.setFixedSize(24, 18)
+                b_sz.setStyleSheet("QPushButton { background: #27272a; color: #e4e4e7; border: 1px solid #3f3f46; border-radius: 3px; font-size: 9px; font-weight: bold; } QPushButton:hover { border-color: #38bdf8; }")
                 b_sz.clicked.connect(lambda _c=False, w=pw, h=ph: self.set_lan_video_size(w, h))
                 row_sz.addWidget(b_sz)
-            row_sz.addStretch()
+            b_cls = QPushButton("✕")
+            b_cls.setFixedSize(18, 18)
+            b_cls.setStyleSheet("QPushButton { background: #27272a; color: #ef4444; border: 1px solid #3f3f46; border-radius: 3px; font-size: 9px; font-weight: bold; }")
+            b_cls.clicked.connect(lambda: self.btn_video_feed.setChecked(False))
+            row_sz.addWidget(b_cls)
             lay_vf.addLayout(row_sz)
 
             self.lbl_video_feed = QLabel("Connecting to LAN Video Feed...")
@@ -1723,32 +1730,50 @@ class DirectorPanelWindow(QWidget):
             self.lbl_video_feed.setFixedSize(w, h)
             self.lbl_video_feed.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.lbl_video_feed.setStyleSheet(
-                "background-color: #09090b; color: #71717a; border: 1px solid #3f3f46; border-radius: 6px; font-size: 10px;"
+                "background-color: #09090b; color: #71717a; border: 1px solid #27272a; border-radius: 4px; font-size: 10px;"
             )
-            lay_vf.addWidget(self.lbl_video_feed, 0, Qt.AlignmentFlag.AlignCenter)
+            lay_vf.addWidget(self.lbl_video_feed)
+            self.video_feed_window = win
 
-            if hasattr(self, "main_layout"):
-                self.main_layout.insertWidget(1, self.video_feed_container, 0, Qt.AlignmentFlag.AlignCenter)
         if not hasattr(self, "_lan_video_client"):
             from lan_video_bridge import LANVideoClient
             self._lan_video_client = LANVideoClient(self)
             self._lan_video_client.frame_received.connect(self._on_lan_video_frame)
             self._lan_video_client.connection_changed.connect(self._on_lan_video_conn_changed)
 
-        self.video_feed_container.setVisible(checked)
         if checked:
             host = getattr(self, "_lan_video_host", "127.0.0.1")
             self._lan_video_client.connect_to_host(host)
+            self.video_feed_window.adjustSize()
+            self._position_video_feed_window()
+            self.video_feed_window.show()
+            self.video_feed_window.raise_()
         else:
             self._lan_video_client.disconnect_feed()
+            self.video_feed_window.hide()
         self.video_feed_toggled.emit(checked)
-        self.adjustSize()
+
+    def _position_video_feed_window(self):
+        if not hasattr(self, "video_feed_window"):
+            return
+        win = self.video_feed_window
+        win.adjustSize()
+        dock_geo = self.geometry()
+        scr = self.screen() or QApplication.primaryScreen()
+        avail = scr.availableGeometry() if scr else dock_geo
+        x = max(avail.left() + 8, min(dock_geo.center().x() - win.width() // 2, avail.right() - win.width() - 8))
+        y = dock_geo.top() - win.height() - 8
+        if y < avail.top() + 8:
+            y = avail.top() + 8
+        win.move(x, y)
 
     def set_lan_video_size(self, width: int, height: int):
         self._lan_video_size = (int(width), int(height))
-        if hasattr(self, "lbl_video_feed"):
+        if hasattr(self, "lbl_video_feed") and hasattr(self, "video_feed_window"):
             self.lbl_video_feed.setFixedSize(int(width), int(height))
-            self.adjustSize()
+            self.video_feed_window.adjustSize()
+            if self.video_feed_window.isVisible():
+                self._position_video_feed_window()
 
     def set_lan_video_host(self, host: str):
         self._lan_video_host = (host or "127.0.0.1").strip()
@@ -2975,6 +3000,11 @@ class DirectorPanelWindow(QWidget):
         self._drag_pos = None
 
     def closeEvent(self, event):
+        if hasattr(self, "video_feed_window") and self.video_feed_window:
+            try:
+                self.video_feed_window.close()
+            except Exception:
+                pass
         if hasattr(self, "soundboard_deck") and self.soundboard_deck:
             try:
                 self.soundboard_deck.close()
