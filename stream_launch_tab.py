@@ -2,11 +2,14 @@ import os
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame, QScrollArea, QCheckBox, QLineEdit, QMessageBox
+    QFrame, QScrollArea, QCheckBox, QLineEdit, QMessageBox,
+    QComboBox, QSpinBox, QProgressBar, QDialog, QListWidget,
+    QListWidgetItem, QGridLayout, QDialogButtonBox
 )
 from PyQt6.QtGui import QColor
 
 from streamlabs_client import get_streamlabs_client
+from deorbit_engine import IFTTT_TRIGGERS, IFTTT_ACTIONS
 from debug_logger import log_debug
 
 DEFAULT_CHECKLIST = [
@@ -17,6 +20,132 @@ DEFAULT_CHECKLIST = [
     "Stream title, category, and Twitch tags updated",
     "Phone & peripheral notifications muted"
 ]
+
+
+class IFTTTRulesDialog(QDialog):
+    """Universal 'If This, Then That' (IFTTT) Automation Rule Builder dialog."""
+
+    def __init__(self, ifttt_engine, parent=None):
+        super().__init__(parent)
+        self.ifttt_engine = ifttt_engine
+        self.setWindowTitle("⚡ IFTTT Automation Rules (If This → Then That)")
+        self.resize(580, 440)
+        self._rules = ifttt_engine.export_rules() if ifttt_engine else []
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(8)
+
+        lbl = QLabel(
+            "Create universal <b>If This → Then That</b> automations for any streaming workflow "
+            "(De-Orbit, Stream Start/End, Scene Switch, Auto-Clip Peak, Recording)."
+        )
+        lbl.setWordWrap(True)
+        lay.addWidget(lbl)
+
+        self.list_rules = QListWidget()
+        self.list_rules.setMinimumHeight(170)
+        lay.addWidget(self.list_rules)
+
+        # New Rule Builder
+        grp = QFrame()
+        grp.setStyleSheet("QFrame { background-color: #18181b; border: 1px solid #3f3f46; border-radius: 6px; padding: 6px; }")
+        grid = QGridLayout(grp)
+        grid.addWidget(QLabel("<b>IF THIS:</b>"), 0, 0)
+        self.combo_trigger = QComboBox()
+        for tid, tlabel in IFTTT_TRIGGERS:
+            self.combo_trigger.addItem(tlabel, tid)
+        grid.addWidget(self.combo_trigger, 0, 1)
+
+        self.txt_trigger_param = QLineEdit()
+        self.txt_trigger_param.setPlaceholderText("Scene filter (for Scene Switch, optional)")
+        grid.addWidget(self.txt_trigger_param, 0, 2)
+
+        grid.addWidget(QLabel("<b>THEN THAT:</b>"), 1, 0)
+        self.combo_action = QComboBox()
+        for aid, alabel in IFTTT_ACTIONS:
+            self.combo_action.addItem(alabel, aid)
+        grid.addWidget(self.combo_action, 1, 1)
+
+        self.txt_action_param = QLineEdit()
+        self.txt_action_param.setPlaceholderText("Target (Scene / Mic / Chat Msg / #Color / Note)")
+        grid.addWidget(self.txt_action_param, 1, 2)
+
+        btn_add = QPushButton("➕ Add Rule")
+        btn_add.setStyleSheet("background-color: #9146ff; color: white; font-weight: bold; padding: 4px 10px;")
+        btn_add.clicked.connect(self._add_rule)
+        grid.addWidget(btn_add, 2, 2)
+        lay.addWidget(grp)
+
+        row_actions = QHBoxLayout()
+        btn_toggle = QPushButton("⏯️ Toggle Enabled")
+        btn_toggle.clicked.connect(self._toggle_selected)
+        row_actions.addWidget(btn_toggle)
+
+        btn_test = QPushButton("⚡ Test Rule")
+        btn_test.clicked.connect(self._test_selected)
+        row_actions.addWidget(btn_test)
+
+        btn_del = QPushButton("🗑️ Delete")
+        btn_del.clicked.connect(self._delete_selected)
+        row_actions.addWidget(btn_del)
+        row_actions.addStretch()
+        lay.addLayout(row_actions)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        lay.addWidget(btns)
+
+        self._refresh_list()
+
+    def _refresh_list(self):
+        self.list_rules.clear()
+        trig_map = dict(IFTTT_TRIGGERS)
+        act_map = dict(IFTTT_ACTIONS)
+        for r in self._rules:
+            st = "✅" if r.get("enabled", True) else "⏸️"
+            tp = f" [{r['trigger_param']}]" if r.get("trigger_param") else ""
+            ap = f" → {r['action_param']}" if r.get("action_param") else ""
+            txt = f"{st} IF {trig_map.get(r.get('trigger'), r.get('trigger'))}{tp}  ==>  {act_map.get(r.get('action'), r.get('action'))}{ap}"
+            self.list_rules.addItem(QListWidgetItem(txt))
+
+    def _add_rule(self):
+        tid = self.combo_trigger.currentData()
+        aid = self.combo_action.currentData()
+        tp = self.txt_trigger_param.text().strip()
+        ap = self.txt_action_param.text().strip()
+        self._rules.append({
+            "id": f"rule_{len(self._rules) + 1}_{tid}",
+            "enabled": True,
+            "trigger": tid,
+            "trigger_param": tp,
+            "action": aid,
+            "action_param": ap,
+        })
+        self.txt_trigger_param.clear()
+        self.txt_action_param.clear()
+        self._refresh_list()
+
+    def _toggle_selected(self):
+        idx = self.list_rules.currentRow()
+        if 0 <= idx < len(self._rules):
+            self._rules[idx]["enabled"] = not self._rules[idx].get("enabled", True)
+            self._refresh_list()
+            self.list_rules.setCurrentRow(idx)
+
+    def _test_selected(self):
+        idx = self.list_rules.currentRow()
+        if 0 <= idx < len(self._rules) and self.ifttt_engine:
+            self.ifttt_engine._execute_action(self._rules[idx])
+
+    def _delete_selected(self):
+        idx = self.list_rules.currentRow()
+        if 0 <= idx < len(self._rules):
+            self._rules.pop(idx)
+            self._refresh_list()
+
+    def get_rules(self) -> list:
+        return list(self._rules)
 
 class StreamLaunchTab(QWidget):
     """
@@ -134,7 +263,10 @@ class StreamLaunchTab(QWidget):
 
         lay_launch.addWidget(opt_box)
 
-        # Big Master Launch Button
+        # Big Master Launch + De-Orbit Row
+        row_launch_btns = QHBoxLayout()
+        row_launch_btns.setSpacing(10)
+
         self.btn_master_launch = QPushButton("🚀  GO FOR LAUNCH")
         self.btn_master_launch.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_master_launch.setToolTip("Initiates Streamlabs broadcast, starts Chronos count-up timer, and activates Trivia cycler.")
@@ -158,9 +290,114 @@ class StreamLaunchTab(QWidget):
             }
         """)
         self.btn_master_launch.clicked.connect(self._on_master_launch_clicked)
-        lay_launch.addWidget(self.btn_master_launch)
+        row_launch_btns.addWidget(self.btn_master_launch, 2)
+
+        self.btn_deorbit = QPushButton("☄️  DE-ORBIT / END")
+        self.btn_deorbit.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_deorbit.setToolTip("Execute automated De-Orbit shutdown sequence (Outro scene, mute mics, countdown, stop stream).")
+        self.btn_deorbit.setStyleSheet("""
+            QPushButton {
+                background-color: #b45309;
+                color: #ffffff;
+                font-size: 13px;
+                font-weight: bold;
+                padding: 12px 14px;
+                border-radius: 6px;
+                border: 1px solid #f59e0b;
+            }
+            QPushButton:hover { background-color: #d97706; }
+        """)
+        self.btn_deorbit.clicked.connect(self._on_deorbit_clicked)
+        row_launch_btns.addWidget(self.btn_deorbit, 1)
+        lay_launch.addLayout(row_launch_btns)
+
+        # Safety Abort Window Banner (visible during De-Orbit countdown)
+        self.banner_deorbit = QFrame()
+        self.banner_deorbit.setStyleSheet(
+            "QFrame { background-color: #450a0a; border: 2px solid #ef4444; border-radius: 6px; padding: 8px; }"
+        )
+        lay_ab = QVBoxLayout(self.banner_deorbit)
+        lay_ab.setSpacing(6)
+        row_ab_top = QHBoxLayout()
+        self.lbl_deorbit_countdown = QLabel("☄️ DE-ORBIT IN PROGRESS — 60s remaining")
+        self.lbl_deorbit_countdown.setStyleSheet("color: #fecaca; font-size: 13px; font-weight: bold;")
+        row_ab_top.addWidget(self.lbl_deorbit_countdown, 1)
+
+        self.btn_abort_deorbit = QPushButton("🛑  ABORT DE-ORBIT")
+        self.btn_abort_deorbit.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_abort_deorbit.setStyleSheet(
+            "QPushButton { background-color: #dc2626; color: #ffffff; font-weight: bold; padding: 6px 14px; border-radius: 4px; border: 1px solid #fca5a5; }"
+            "QPushButton:hover { background-color: #b91c1c; }"
+        )
+        self.btn_abort_deorbit.clicked.connect(self._on_abort_deorbit_clicked)
+        row_ab_top.addWidget(self.btn_abort_deorbit)
+        lay_ab.addLayout(row_ab_top)
+
+        self.prog_deorbit = QProgressBar()
+        self.prog_deorbit.setRange(0, 60)
+        self.prog_deorbit.setValue(60)
+        lay_ab.addWidget(self.prog_deorbit)
+        self.banner_deorbit.setVisible(False)
+        lay_launch.addWidget(self.banner_deorbit)
 
         layout.addWidget(card_launch)
+
+        # ------------------ CARD 1B: DE-ORBIT & IFTTT AUTOMATION ------------------
+        card_deorbit = QFrame()
+        card_deorbit.setStyleSheet("""
+            QFrame {
+                background-color: #18181b;
+                border: 1px solid #27272a;
+                border-radius: 8px;
+                padding: 10px;
+            }
+        """)
+        lay_de = QVBoxLayout(card_deorbit)
+        lay_de.setSpacing(6)
+        hdr_de = QHBoxLayout()
+        lbl_de_title = QLabel("☄️  <b>De-Orbit Sequence & IFTTT Automation</b>")
+        lbl_de_title.setStyleSheet("font-size: 12px; color: #efeff1; font-weight: bold;")
+        hdr_de.addWidget(lbl_de_title)
+        hdr_de.addStretch()
+        self.btn_ifttt_rules = QPushButton("⚡ IFTTT Rules...")
+        self.btn_ifttt_rules.setStyleSheet("background-color: #27272a; color: #38bdf8; border: 1px solid #3f3f46; font-weight: bold; padding: 3px 10px; border-radius: 4px;")
+        self.btn_ifttt_rules.clicked.connect(self._open_ifttt_rules_dialog)
+        hdr_de.addWidget(self.btn_ifttt_rules)
+        lay_de.addLayout(hdr_de)
+
+        row_de_cfg = QHBoxLayout()
+        row_de_cfg.addWidget(QLabel("Outro Scene:"))
+        self.combo_deorbit_scene = QComboBox()
+        self.combo_deorbit_scene.setEditable(True)
+        self.combo_deorbit_scene.setMinimumWidth(140)
+        self.combo_deorbit_scene.addItems(["Stream Ending", "Stream BRB", "Outro"])
+        row_de_cfg.addWidget(self.combo_deorbit_scene, 1)
+
+        row_de_cfg.addWidget(QLabel("Countdown (s):"))
+        self.spin_deorbit_sec = QSpinBox()
+        self.spin_deorbit_sec.setRange(10, 300)
+        self.spin_deorbit_sec.setValue(60)
+        row_de_cfg.addWidget(self.spin_deorbit_sec)
+        lay_de.addLayout(row_de_cfg)
+
+        row_de_chks = QHBoxLayout()
+        self.chk_deorbit_mute = QCheckBox("Mute Mics")
+        self.chk_deorbit_cycler = QCheckBox("Start Credits / Cycler")
+        self.chk_deorbit_stop = QCheckBox("Stop Stream at 0s")
+        row_de_chks.addWidget(self.chk_deorbit_mute)
+        row_de_chks.addWidget(self.chk_deorbit_cycler)
+        row_de_chks.addWidget(self.chk_deorbit_stop)
+        row_de_chks.addStretch()
+        lay_de.addLayout(row_de_chks)
+
+        row_de_chat = QHBoxLayout()
+        row_de_chat.addWidget(QLabel("Farewell Chat:"))
+        self.txt_deorbit_chat = QLineEdit()
+        self.txt_deorbit_chat.setPlaceholderText("Optional Twitch message on De-Orbit (e.g. Thanks for watching!)")
+        row_de_chat.addWidget(self.txt_deorbit_chat, 1)
+        lay_de.addLayout(row_de_chat)
+
+        layout.addWidget(card_deorbit)
 
         # ------------------ CARD 2: AUTOMATED DIAGNOSTICS CHECKLIST ------------------
         card_auto = QFrame()
@@ -284,6 +521,8 @@ class StreamLaunchTab(QWidget):
         # Connect Streamlabs streaming status listener to auto-reset launchpad when stream ends
         if hasattr(self.slobs_client, "streaming_status_changed"):
             self.slobs_client.streaming_status_changed.connect(self._on_slobs_streaming_status)
+
+        self._init_deorbit_wiring()
 
     def refresh_telemetry(self):
         """Polls active hardware, pipe, and account states."""
@@ -588,6 +827,81 @@ class StreamLaunchTab(QWidget):
             if not self._is_live:
                 log_debug("LAUNCHPAD", "Stream broadcast detected LIVE in Streamlabs Desktop. Updating Launchpad state.")
                 self._set_live_state(True)
+
+    def _init_deorbit_wiring(self):
+        de = getattr(self.overlay, "deorbit_engine", None) if self.overlay else None
+        if de:
+            self.combo_deorbit_scene.setCurrentText(de.outro_scene_name)
+            self.spin_deorbit_sec.setValue(int(de.countdown_seconds))
+            self.chk_deorbit_mute.setChecked(bool(de.mute_mics))
+            self.chk_deorbit_cycler.setChecked(bool(de.start_credits_cycler))
+            self.chk_deorbit_stop.setChecked(bool(de.stop_stream_on_finish))
+            self.txt_deorbit_chat.setText(de.farewell_chat_message)
+
+            de.deorbit_started.connect(self._on_deorbit_started)
+            de.deorbit_tick.connect(self._on_deorbit_tick)
+            de.deorbit_completed.connect(self._on_deorbit_finished)
+            de.deorbit_aborted.connect(self._on_deorbit_finished)
+
+        self.combo_deorbit_scene.currentTextChanged.connect(self._sync_deorbit_settings)
+        self.spin_deorbit_sec.valueChanged.connect(self._sync_deorbit_settings)
+        self.chk_deorbit_mute.toggled.connect(self._sync_deorbit_settings)
+        self.chk_deorbit_cycler.toggled.connect(self._sync_deorbit_settings)
+        self.chk_deorbit_stop.toggled.connect(self._sync_deorbit_settings)
+        self.txt_deorbit_chat.editingFinished.connect(self._sync_deorbit_settings)
+
+    def _sync_deorbit_settings(self):
+        de = getattr(self.overlay, "deorbit_engine", None) if self.overlay else None
+        if not de:
+            return
+        de.outro_scene_name = self.combo_deorbit_scene.currentText().strip()
+        de.countdown_seconds = int(self.spin_deorbit_sec.value())
+        de.mute_mics = self.chk_deorbit_mute.isChecked()
+        de.start_credits_cycler = self.chk_deorbit_cycler.isChecked()
+        de.stop_stream_on_finish = self.chk_deorbit_stop.isChecked()
+        de.farewell_chat_message = self.txt_deorbit_chat.text().strip()
+        if hasattr(self.overlay, "save_settings"):
+            self.overlay.save_settings()
+
+    def _on_deorbit_clicked(self):
+        self._sync_deorbit_settings()
+        de = getattr(self.overlay, "deorbit_engine", None) if self.overlay else None
+        if not de:
+            return
+        if de.is_active:
+            return
+        de.start_deorbit()
+
+    def _on_abort_deorbit_clicked(self):
+        de = getattr(self.overlay, "deorbit_engine", None) if self.overlay else None
+        if de and de.is_active:
+            de.abort_deorbit()
+
+    def _on_deorbit_started(self, total_sec: int):
+        self.prog_deorbit.setRange(0, max(1, total_sec))
+        self.prog_deorbit.setValue(total_sec)
+        self.lbl_deorbit_countdown.setText(f"☄️ DE-ORBIT IN PROGRESS — {total_sec}s remaining")
+        self.banner_deorbit.setVisible(True)
+        self.btn_deorbit.setEnabled(False)
+
+    def _on_deorbit_tick(self, rem_sec: int, total_sec: int):
+        self.prog_deorbit.setValue(max(0, rem_sec))
+        self.lbl_deorbit_countdown.setText(f"☄️ DE-ORBIT IN PROGRESS — {rem_sec}s remaining")
+
+    def _on_deorbit_finished(self):
+        self.banner_deorbit.setVisible(False)
+        self.btn_deorbit.setEnabled(True)
+        de = getattr(self.overlay, "deorbit_engine", None) if self.overlay else None
+        if de and not de.is_active and de.remaining_seconds <= 0:
+            self.reset_to_standby(stop_timers=True)
+
+    def _open_ifttt_rules_dialog(self):
+        ifttt = getattr(self.overlay, "ifttt_engine", None) if self.overlay else None
+        dlg = IFTTTRulesDialog(ifttt, self)
+        if dlg.exec() == QDialog.DialogCode.Accepted and ifttt:
+            ifttt.load_rules(dlg.get_rules())
+            if hasattr(self.overlay, "save_settings"):
+                self.overlay.save_settings()
 
     def refresh_theme_labels(self, effective):
         pass

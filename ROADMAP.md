@@ -237,7 +237,7 @@ Streamer Calyx V4 expands from a Twitch-centric live overlay and remote director
 
 ---
 
-### Phase 11: Mission Control "De-Orbit" & Automated Stream Shutdown
+### Phase 11: Mission Control "De-Orbit" & Automated Stream Shutdown — *Completed*
 *Execute seamless, professional broadcast sign-offs with one click.*
 
 - **11.1 Automated De-Orbit Sequence**:
@@ -349,3 +349,14 @@ Streamer Calyx V4 expands from a Twitch-centric live overlay and remote director
   - Custom triggers binding Twitch Channel Points rewards and Bits events directly to soundboard audio cues, trivia reveals, or overlay animations.
 - **Encrypted Cloud Sync for Multi-Rig Streamers**:
   - Secure end-to-end encrypted backup and synchronization of Calyx profiles, hotkeys, timers, and soundboard configs across dual-PC streaming setups.
+
+---
+
+## 🛠️ Post-Phase Local "Agent Dev" Edition *(Private / Not on GitHub)*
+> [!NOTE]
+> Dedicated local-only build (never pushed to public GitHub) for trusted contributors ("Agents") authoring in-app Help, Suggestions, and Tooltips.
+
+- **In-App JSON Editor / Viewer Tab**:
+  - Multi-file tabbed viewer/editor at the top (`context_help.json`, separate tooltip JSON file if split, etc.) so Agents can inspect, validate, and edit entries live without leaving the app.
+- **`Ctrl + Left Shift + Right-Click` Element Capture**:
+  - Clicking any UI widget with `Ctrl + LShift + Right-Click` automatically captures the widget's `objectName` / class / label and opens a quick-entry **Popup Modal** for the Agent to type the Help Title, Description, Tooltip, and Suggestions, writing directly into the active JSON file and refreshing live.

@@ -39,6 +39,7 @@ hidden_imports = [
     'moments_logger',
     'about_tab',
     'stream_launch_tab',
+    'deorbit_engine',
     'logs_tab',
     'beta_telemetry_dialog',
     'debug_logger',

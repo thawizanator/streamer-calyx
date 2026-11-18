@@ -522,6 +522,23 @@ class RedBorderOverlay(QMainWindow):
         self._saved_overlay_state = None
         from moments_logger import MomentsLogger
         self.moments_logger = MomentsLogger(APP_DIR, parent=self)
+        from deorbit_engine import IFTTTRuleEngine, DeOrbitSequenceEngine
+        from streamlabs_client import get_streamlabs_client
+        slobs_cli = get_streamlabs_client()
+        self.ifttt_engine = IFTTTRuleEngine(overlay=self, slobs_client=slobs_cli, parent=self)
+        self.deorbit_engine = DeOrbitSequenceEngine(overlay=self, slobs_client=slobs_cli, ifttt_engine=self.ifttt_engine, parent=self)
+        if slobs_cli:
+            slobs_cli.scene_switched.connect(lambda _id, name: self.ifttt_engine.fire_trigger("scene_switched", name))
+            if hasattr(slobs_cli, "streaming_status_changed"):
+                slobs_cli.streaming_status_changed.connect(
+                    lambda st: self.ifttt_engine.fire_trigger("stream_started" if str(st).lower() == "live" else "stream_ended")
+                    if str(st).lower() in ("live", "offline", "ended") else None
+                )
+            if hasattr(slobs_cli, "recording_status_changed"):
+                slobs_cli.recording_status_changed.connect(
+                    lambda st: self.ifttt_engine.fire_trigger("recording_started")
+                    if str(st).lower() == "recording" else None
+                )
         self.input_manager = InputManager(overlay=self, parent=self)
         self.input_manager.trigger_action.connect(self._handle_input_action)
         self.load_settings()
@@ -713,6 +730,10 @@ class RedBorderOverlay(QMainWindow):
                         self.cycler_engine.import_settings(d.get("cycler", {}))
                     if hasattr(self, "auto_clip_engine") and self.auto_clip_engine and "autoclip" in d:
                         self.auto_clip_engine.import_settings(d.get("autoclip", {}))
+                    if hasattr(self, "deorbit_engine") and self.deorbit_engine and "deorbit" in d:
+                        self.deorbit_engine.import_settings(d.get("deorbit", {}))
+                    if hasattr(self, "ifttt_engine") and self.ifttt_engine and "ifttt_rules" in d:
+                        self.ifttt_engine.load_rules(d.get("ifttt_rules", []))
                     self.director_settings = d.get("director", {})
                     if hasattr(self, "input_manager") and self.input_manager:
                         self.input_manager.load_bindings(d)
@@ -769,6 +790,10 @@ class RedBorderOverlay(QMainWindow):
             d["cycler"] = self.cycler_engine.export_settings()
         if hasattr(self, "auto_clip_engine") and self.auto_clip_engine:
             d["autoclip"] = self.auto_clip_engine.export_settings()
+        if hasattr(self, "deorbit_engine") and self.deorbit_engine:
+            d["deorbit"] = self.deorbit_engine.export_settings()
+        if hasattr(self, "ifttt_engine") and self.ifttt_engine:
+            d["ifttt_rules"] = self.ifttt_engine.export_rules()
         if hasattr(self, "settings_window") and self.settings_window and hasattr(self.settings_window, "tab_director"):
             self.director_settings = self.settings_window.tab_director.export_settings()
         if hasattr(self, "director_settings") and self.director_settings:
@@ -1211,6 +1236,10 @@ class RedBorderOverlay(QMainWindow):
         # 3b. Log Offline Production Moment (if Content Creator Mode enabled)
         if getattr(self, "content_creator_mode", False) and hasattr(self, "moments_logger") and self.moments_logger:
             self.moments_logger.log_moment(description=f"{icon} {label} ({desc})", source="Auto-Clip")
+
+        # 3c. Fire IFTTT rules for autoclip_peak
+        if hasattr(self, "ifttt_engine") and self.ifttt_engine:
+            self.ifttt_engine.fire_trigger("autoclip_peak", label)
 
         # 4. Display In-Game HUD Toast notification
         ts_str = payload.get("timestamp_str", "")
