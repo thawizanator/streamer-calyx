@@ -147,9 +147,9 @@ class LANVideoServer(QObject):
             pass
 
     def start(self) -> bool:
-        if self.enabled:
+        if self.enabled and self._server.isListening():
             return True
-        if self._server.listen(QHostAddress.SpecialAddress.Any, self.port):
+        if self._server.isListening() or self._server.listen(QHostAddress.SpecialAddress.AnyIPv4, self.port):
             self.enabled = True
             self.set_fps(self.fps)
             if self.capture_source in ("auto", "virtual_cam"):
@@ -277,7 +277,7 @@ class LANVideoServer(QObject):
 
 
 class LANVideoClient(QObject):
-    """Director-side LAN WebSocket video preview receiver."""
+    """Director-side LAN WebSocket video preview receiver with auto-reconnect."""
 
     frame_received = pyqtSignal(QPixmap)
     connection_changed = pyqtSignal(bool)
@@ -285,18 +285,39 @@ class LANVideoClient(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._ws = QWebSocket()
-        self._ws.connected.connect(lambda: self.connection_changed.emit(True))
-        self._ws.disconnected.connect(lambda: self.connection_changed.emit(False))
+        self._ws.connected.connect(self._on_ws_connected)
+        self._ws.disconnected.connect(self._on_ws_disconnected)
         self._ws.binaryMessageReceived.connect(self._on_binary_frame)
         self._connected_url = ""
+        self._want_connected = False
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setSingleShot(True)
+        self._reconnect_timer.setInterval(2000)
+        self._reconnect_timer.timeout.connect(self._retry_connect)
 
     def connect_to_host(self, host: str = "127.0.0.1", port: int = LAN_VIDEO_PORT):
+        self._want_connected = True
         url = f"ws://{host.strip() or '127.0.0.1'}:{int(port)}"
         self._connected_url = url
         self._ws.open(QUrl(url))
 
     def disconnect_feed(self):
+        self._want_connected = False
+        self._reconnect_timer.stop()
         self._ws.close()
+
+    def _on_ws_connected(self):
+        self._reconnect_timer.stop()
+        self.connection_changed.emit(True)
+
+    def _on_ws_disconnected(self):
+        self.connection_changed.emit(False)
+        if self._want_connected and self._connected_url:
+            self._reconnect_timer.start()
+
+    def _retry_connect(self):
+        if self._want_connected and self._connected_url and not self.is_connected():
+            self._ws.open(QUrl(self._connected_url))
 
     def is_connected(self) -> bool:
         return self._ws.state() == self._ws.state().ConnectedState
