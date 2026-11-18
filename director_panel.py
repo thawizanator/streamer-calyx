@@ -1193,7 +1193,7 @@ class DirectorPanelWindow(QWidget):
         self._pending_scene_target = None
         self._scene_switch_timer = QTimer(self)
         self._scene_switch_timer.setSingleShot(True)
-        self._scene_switch_timer.setInterval(80)
+        self._scene_switch_timer.setInterval(450)
         self._scene_switch_timer.timeout.connect(self._dispatch_pending_scene_switch)
 
         self._build_ui()
@@ -2651,8 +2651,10 @@ class DirectorPanelWindow(QWidget):
             self.lbl_status.setText("<span style='color: #ef4444;'>● Disconnected</span>")
 
     def _on_slobs_scene_switched(self, scene_id, scene_name):
-        # Ignore stale/delayed SLOBS pipe echoes shortly after a local rapid scene click
-        if (time.time() - getattr(self, "_last_local_scene_click_ts", 0.0)) < 1.5:
+        # Ignore stale/delayed SLOBS pipe echoes while a debounced switch is pending or shortly after a local click
+        if getattr(self, "_scene_switch_timer", None) and self._scene_switch_timer.isActive():
+            return
+        if (time.time() - getattr(self, "_last_local_scene_click_ts", 0.0)) < 3.0:
             cur_id = (getattr(self, "_active_scene_id", "") or "").strip().lower()
             cur_name = (getattr(self, "_active_scene_name", "") or "").strip().lower()
             ev_id = (scene_id or "").strip().lower()
