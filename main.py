@@ -983,9 +983,11 @@ class RedBorderOverlay(QMainWindow):
                         self.twitch_macros[i]["hotkey"] = norm_hk
                         self.input_manager.set_binding(aid, "keyboard", norm_hk, hold=0.0, enabled=True)
                     else:
-                        self.input_manager.clear_binding(aid)
+                        if aid in self.input_manager.bindings and self.input_manager.bindings[aid].get("binding"):
+                            self.input_manager.clear_binding(aid)
                 else:
-                    self.input_manager.clear_binding(aid)
+                    if aid in self.input_manager.bindings and self.input_manager.bindings[aid].get("binding"):
+                        self.input_manager.clear_binding(aid)
             return
 
         for m in self.twitch_macros:

@@ -921,6 +921,9 @@ class TwitchTab(QWidget):
         self.btn_save.setToolTip("Save all configured Twitch chat macro commands and hotkeys.")
         self.btn_save.clicked.connect(self.save_macros)
         macro_actions_layout.addWidget(self.btn_save)
+        self.lbl_save_status = QLabel("")
+        self.lbl_save_status.setStyleSheet("color: #22c55e; font-weight: bold; margin-left: 8px;")
+        macro_actions_layout.addWidget(self.lbl_save_status)
         macro_actions_layout.addStretch()
         lay_mac.addLayout(macro_actions_layout)
 
@@ -1071,7 +1074,8 @@ class TwitchTab(QWidget):
             saved_command = "/marker [username]"
         combo.setCurrentText(saved_command)
 
-        btn_hk = QPushButton(saved_hotkey)
+        display_hk = (saved_hotkey or "").strip() or "set hotkey..."
+        btn_hk = QPushButton(display_hk)
         btn_hk.setCheckable(True)
         btn_hk.clicked.connect(lambda checked, b=btn_hk: self.on_hotkey_btn_clicked(b))
 
@@ -1124,17 +1128,38 @@ class TwitchTab(QWidget):
 
     def save_macros(self):
         self.main_win.overlay.twitch_channel = self.txt_channel.text().strip()
+
         def clean_hk(txt):
-            t = txt.replace(" (Click to Finish)", "").strip()
-            if t in ("set hotkey...", "Press key(s)...", "Press Key..."):
+            t = (txt or "").replace(" (Click to Finish)", "").strip()
+            if t in ("set hotkey...", "Press key(s)...", "Press Keys...", "Press Key..."):
                 return ""
             return t
 
-        p_macros = [
-            {"command": r["combo"].currentText(), "hotkey": normalize_hotkey(clean_hk(r["btn_hk"].text()))}
-            for r in self.rows
-            if normalize_hotkey(clean_hk(r["btn_hk"].text()))
-        ]
+        p_macros = []
+        missing_hk_rows = []
+        for idx, r in enumerate(self.rows):
+            btn_hk = r["btn_hk"]
+            # Finalize any active key-recording state before reading
+            if btn_hk.isChecked():
+                recorded = getattr(btn_hk, "_recorded_keys", [])
+                btn_hk.setChecked(False)
+                btn_hk.setStyleSheet("")
+                if recorded:
+                    btn_hk.setText("+".join(recorded))
+                else:
+                    orig = getattr(btn_hk, "_original_text", "set hotkey...")
+                    btn_hk.setText(orig if clean_hk(orig) else "set hotkey...")
+                btn_hk._recorded_keys = []
+
+            raw_hk = clean_hk(btn_hk.text())
+            norm_hk = normalize_hotkey(raw_hk) if raw_hk else ""
+            if norm_hk:
+                btn_hk.setText(norm_hk)
+                p_macros.append({"command": r["combo"].currentText(), "hotkey": norm_hk})
+            else:
+                btn_hk.setText("set hotkey...")
+                missing_hk_rows.append(idx + 1)
+
         self.main_win.overlay.twitch_macros = p_macros
         self.main_win.overlay.save_settings()
         self._syncing_macros = True
@@ -1142,6 +1167,21 @@ class TwitchTab(QWidget):
             self.main_win.overlay.rebind_twitch_macros()
         finally:
             self._syncing_macros = False
+
+        if hasattr(self, "lbl_save_status"):
+            if missing_hk_rows:
+                self.lbl_save_status.setStyleSheet("color: #f59e0b; font-weight: bold; margin-left: 8px;")
+                self.lbl_save_status.setText(
+                    f"Saved {len(p_macros)} macro(s) — row {', '.join(map(str, missing_hk_rows))} has no hotkey set"
+                )
+            else:
+                self.lbl_save_status.setStyleSheet("color: #22c55e; font-weight: bold; margin-left: 8px;")
+                self.lbl_save_status.setText(f"✅ Saved {len(p_macros)} Twitch macro(s)!")
+            QTimer.singleShot(4000, lambda: self.lbl_save_status.setText("") if hasattr(self, "lbl_save_status") else None)
+
+        if hasattr(self, "btn_save"):
+            self.btn_save.setText("✅ Saved!")
+            QTimer.singleShot(1800, lambda: self.btn_save.setText("💾 Save Twitch Hotkeys") if hasattr(self, "btn_save") else None)
 
 
 # ==============================================================================
