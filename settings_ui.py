@@ -2491,6 +2491,8 @@ def normalize_hotkey(hotkey_str):
             normalized_parts.append("subtract")
         elif p == "plus":
             normalized_parts.append("add")
+        elif p == "divide":
+            normalized_parts.append("/")
         elif p in ("esc", "escape"):
             normalized_parts.append("esc")
         else:
@@ -2513,7 +2515,7 @@ def format_hotkey_display(hotkey_str):
         elif pl == "subtract": formatted_parts.append("Numpad -")
         elif pl == "multiply": formatted_parts.append("Numpad *")
         elif pl == "asterisk": formatted_parts.append("*")
-        elif pl == "divide": formatted_parts.append("Numpad /")
+        elif pl in ("divide", "/"): formatted_parts.append("/")
         elif pl == "decimal": formatted_parts.append("Numpad .")
         elif pl.startswith("f") and pl[1:].isdigit(): formatted_parts.append(p.upper())
         elif pl == "space": formatted_parts.append("Space")
@@ -2527,7 +2529,7 @@ def qt_key_to_keyboard_str(key, text=""):
         Qt.Key.Key_Plus: "add",
         Qt.Key.Key_Minus: "subtract",
         Qt.Key.Key_Asterisk: "asterisk",
-        Qt.Key.Key_Slash: "divide",
+        Qt.Key.Key_Slash: "/",
         Qt.Key.Key_Period: "decimal",
         Qt.Key.Key_Comma: "comma",
         Qt.Key.Key_Space: "space",

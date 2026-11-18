@@ -623,7 +623,11 @@ class InputManager(QObject):
             if not k_str or k_str.lower() in ["not set", "set hotkey...", "press key...", "press key(s)..."]:
                 continue
 
-            # Dual-alias normalization: allow both 'ctrl+add' and 'ctrl+plus'
+            # Dual-alias normalization: allow both 'ctrl+add' and 'ctrl+plus', and map 'divide' -> '/'
+            if "+divide" in k_str.lower():
+                k_str = k_str.lower().replace("+divide", "+/")
+            elif k_str.lower() == "divide":
+                k_str = "/"
             keys_to_bind = [k_str]
             k_lower = k_str.lower()
             if "+add" in k_lower:
