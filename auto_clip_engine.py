@@ -575,15 +575,20 @@ class AutoClipEngine(QObject):
             self._envelope_buffer.append(level)
             if vocal_vad and len(self._envelope_buffer) >= 16:
                 env = np.array(self._envelope_buffer, dtype=np.float32)
-                if float(np.std(env)) >= 0.015:
-                    env = env - np.mean(env)
-                    env_spec = np.abs(np.fft.rfft(env)) ** 2
-                    env_freqs = np.fft.rfftfreq(env.size, d=0.05)  # 20 Hz frame rate
+                env_std = float(np.std(env))
+                if env_std >= 0.035 and level >= 0.22:
+                    env_zm = env - np.mean(env)
+                    env_spec = np.abs(np.fft.rfft(env_zm)) ** 2
+                    env_freqs = np.fft.rfftfreq(env_zm.size, d=0.05)  # 20 Hz frame rate
                     env_total = float(np.sum(env_spec[1:])) + 1e-9
-                    laugh_mask = (env_freqs >= 4.0) & (env_freqs <= 6.0)
+                    laugh_mask = (env_freqs >= 4.2) & (env_freqs <= 6.0)
                     banter_mask = (env_freqs > 6.0) & (env_freqs <= 10.0)
-                    result["laughter_cadence"] = min(1.0, float(np.sum(env_spec[laugh_mask])) / env_total * 2.2)
-                    result["banter_cadence"] = min(1.0, float(np.sum(env_spec[banter_mask])) / env_total * 2.2)
+                    raw_laugh = float(np.sum(env_spec[laugh_mask])) / env_total
+                    raw_banter = float(np.sum(env_spec[banter_mask])) / env_total
+                    # Subtract normal speech syllable floor (~24%) and require rhythmic depth
+                    depth_gain = min(1.0, env_std / 0.08)
+                    result["laughter_cadence"] = min(1.0, max(0.0, (raw_laugh - 0.24) / 0.38) * depth_gain)
+                    result["banter_cadence"] = min(1.0, max(0.0, (raw_banter - 0.18) / 0.35) * depth_gain)
 
             # Autocorrelation Pitch Tracking (F0: 80 - 550 Hz) when vocal activity present
             if vocal_vad and hp_sig.size >= (sr // 40):
@@ -647,17 +652,17 @@ class AutoClipEngine(QObject):
         8-Zone Human Vocal Reaction Classifier.
         Returns (icon, label, slug).
         """
-        if level >= 0.90 and f0_ratio >= 1.25 and laughter_cadence < 0.40:
+        if level >= 0.90 and f0_ratio >= 1.25 and laughter_cadence < 0.35:
             return self.REACTION_ZONES[0]  # 🔥 Pure Hype Explosion
-        if laughter_cadence >= 0.42:
+        if laughter_cadence >= 0.38:
             return self.REACTION_ZONES[1]  # 😂 Hysterical Laughter Fit
         if f0_hz >= 340.0 or f0_ratio >= 1.60:
             return self.REACTION_ZONES[2]  # 😱 High-Pitched Scream / Shriek
         if crest_factor >= 5.2 and f0_ratio >= 1.35 and level < 0.85:
             return self.REACTION_ZONES[6]  # 😮 Loud Gasp / Shock
-        if laughter_cadence >= 0.26:
+        if laughter_cadence >= 0.20:
             return self.REACTION_ZONES[4]  # 😆 Hyped Laughing Burst
-        if banter_cadence >= 0.34 and level < 0.86:
+        if banter_cadence >= 0.28 and level < 0.86:
             return self.REACTION_ZONES[5]  # 🗣️ Intense Rapid Banter
         if level >= 0.72:
             return self.REACTION_ZONES[3]  # 📢 Victory Shout / Callout
