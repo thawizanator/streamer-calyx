@@ -1050,7 +1050,7 @@ class AutoClipTab(QWidget):
         comp_hype = float(tel.get("composite_hype", 0.0))
         thresh = getattr(self, "_last_threshold", self.engine.current_threshold)
 
-        vad_val = min(1.0, vocal_ratio * 1.4) if vocal_vad else 0.0
+        vad_val = float(tel.get("vad_confidence", 0.0)) if vocal_vad else 0.0
         self.bar_vad.set_value(vad_val)
         self.lbl_lv_vad.setText(f"{int(round(vad_val * 100))}% (Human Voice)" if vocal_vad else "0% (Idle)")
 

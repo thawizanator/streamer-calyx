@@ -548,9 +548,14 @@ class AutoClipEngine(QObject):
             level = min(1.0, max(0.0, (0.65 * p_rms) + (0.35 * p_peak)))
             result["level"] = level
 
-            # Voice Activity Detection in 80-3500 Hz
+            # Voice Activity Detection in 80-3500 Hz + SNR-weighted confidence (avoids pinning at 100%)
             vocal_vad = (vocal_ratio >= 0.38) and (level >= 0.14) and (not is_thump)
             result["vocal_vad"] = vocal_vad
+            if vocal_vad:
+                snr_score = min(1.0, max(0.0, (level - max(0.08, self.current_baseline)) / 0.35))
+                result["vad_confidence"] = min(1.0, (0.55 * vocal_ratio) + (0.45 * snr_score))
+            else:
+                result["vad_confidence"] = 0.0
 
             # Update 20 Hz envelope buffer & compute 4-6 Hz laughter + 6-10 Hz banter cadence
             self._envelope_buffer.append(level)
