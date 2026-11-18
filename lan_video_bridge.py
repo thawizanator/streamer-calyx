@@ -1,13 +1,21 @@
 """
 Streamer Calyx - Phase 12 LAN Low-Latency Video Feed Bridge
 Streams lightweight JPEG frames over QWebSocket (port 59652) at configurable
-FPS throttle (1, 5, 10, or 15 FPS) from the Streamer rig to Director panels.
+FPS throttle (1, 5, 10, or 15 FPS) from SLOBS/OBS Virtual Camera, SLOBS Window,
+or Target Monitor to Director panels.
 """
 
+import sys
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QBuffer, QIODevice, QByteArray, QUrl, Qt
-from PyQt6.QtGui import QGuiApplication, QPixmap
+from PyQt6.QtGui import QGuiApplication, QPixmap, QImage
 from PyQt6.QtNetwork import QHostAddress
 from PyQt6.QtWebSockets import QWebSocketServer, QWebSocket
+
+try:
+    from PyQt6.QtMultimedia import QMediaDevices, QCamera, QMediaCaptureSession, QVideoSink
+    HAS_QCAMERA = True
+except Exception:
+    HAS_QCAMERA = False
 
 try:
     from debug_logger import log_debug
@@ -19,22 +27,57 @@ except ImportError:
 LAN_VIDEO_PORT = 59652
 
 
+def _find_slobs_obs_hwnd() -> int:
+    """Finds the Streamlabs Desktop or OBS Studio main window handle on Windows."""
+    if sys.platform != "win32":
+        return 0
+    try:
+        import win32gui
+        found = []
+
+        def _enum_cb(hwnd, _):
+            if not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd):
+                return True
+            title = (win32gui.GetWindowText(hwnd) or "").strip()
+            low = title.lower()
+            if not title:
+                return True
+            if ("streamlabs" in low and "calyx" not in low) or low.startswith("obs ") or "obs studio" in low:
+                rect = win32gui.GetWindowRect(hwnd)
+                if (rect[2] - rect[0]) >= 300 and (rect[3] - rect[1]) >= 200:
+                    found.append((hwnd, title))
+            return True
+
+        win32gui.EnumWindows(_enum_cb, None)
+        return found[0][0] if found else 0
+    except Exception:
+        return 0
+
+
 class LANVideoServer(QObject):
-    """Host-side LAN WebSocket video preview streamer with FPS throttle."""
+    """Host-side LAN WebSocket video preview streamer with FPS throttle & SLOBS scene capture."""
 
     client_count_changed = pyqtSignal(int)
 
-    def __init__(self, port: int = LAN_VIDEO_PORT, fps: int = 5, monitor_index: int = 0, parent=None):
+    def __init__(self, port: int = LAN_VIDEO_PORT, fps: int = 5, monitor_index: int = 0,
+                 capture_source: str = "auto", parent=None):
         super().__init__(parent)
         self.port = int(port)
         self.fps = self._clamp_fps(fps)
         self.monitor_index = int(monitor_index)
+        self.capture_source = capture_source or "auto"
         self.enabled = False
         self._server = QWebSocketServer("CalyxLANVideo", QWebSocketServer.SslMode.NonSecureMode, self)
         self._clients = []
         self._capture_timer = QTimer(self)
         self._capture_timer.timeout.connect(self._capture_and_broadcast)
         self._server.newConnection.connect(self._on_new_connection)
+
+        # Optional Virtual Camera state
+        self._camera = None
+        self._capture_session = None
+        self._video_sink = None
+        self._latest_cam_image = None
 
     @staticmethod
     def _clamp_fps(fps: int) -> int:
@@ -50,14 +93,69 @@ class LANVideoServer(QObject):
     def set_monitor_index(self, idx: int):
         self.monitor_index = max(0, int(idx))
 
+    def set_capture_source(self, source_mode: str):
+        self.capture_source = source_mode or "auto"
+        if self.enabled:
+            self._teardown_virtual_cam()
+            if self.capture_source in ("auto", "virtual_cam"):
+                self._try_init_virtual_cam()
+
+    def _try_init_virtual_cam(self) -> bool:
+        if not HAS_QCAMERA:
+            return False
+        try:
+            cams = QMediaDevices.videoInputs()
+            vcam = None
+            for c in cams:
+                desc = (c.description() or "").lower()
+                if any(k in desc for k in ("streamlabs", "obs virtual", "virtual camera", "virtual webcam")):
+                    vcam = c
+                    break
+            if not vcam:
+                return False
+            self._camera = QCamera(vcam, self)
+            self._video_sink = QVideoSink(self)
+            self._video_sink.videoFrameChanged.connect(self._on_vcam_frame)
+            self._capture_session = QMediaCaptureSession(self)
+            self._capture_session.setCamera(self._camera)
+            self._capture_session.setVideoSink(self._video_sink)
+            self._camera.start()
+            log_debug("LAN_VIDEO", f"Attached to Virtual Camera: '{vcam.description()}'")
+            return True
+        except Exception as e:
+            log_debug("LAN_VIDEO", f"Virtual camera init skipped: {e}")
+            self._teardown_virtual_cam()
+            return False
+
+    def _teardown_virtual_cam(self):
+        if self._camera:
+            try:
+                self._camera.stop()
+            except Exception:
+                pass
+        self._camera = None
+        self._capture_session = None
+        self._video_sink = None
+        self._latest_cam_image = None
+
+    def _on_vcam_frame(self, frame):
+        try:
+            img = frame.toImage()
+            if not img.isNull():
+                self._latest_cam_image = img
+        except Exception:
+            pass
+
     def start(self) -> bool:
         if self.enabled:
             return True
         if self._server.listen(QHostAddress.SpecialAddress.Any, self.port):
             self.enabled = True
             self.set_fps(self.fps)
+            if self.capture_source in ("auto", "virtual_cam"):
+                self._try_init_virtual_cam()
             self._capture_timer.start()
-            log_debug("LAN_VIDEO", f"LAN Video Server listening on port {self.port} ({self.fps} FPS)")
+            log_debug("LAN_VIDEO", f"LAN Video Server listening on port {self.port} ({self.fps} FPS, source={self.capture_source})")
             return True
         log_debug("LAN_VIDEO_ERR", f"Failed to listen on port {self.port}: {self._server.errorString()}")
         return False
@@ -65,6 +163,7 @@ class LANVideoServer(QObject):
     def stop(self):
         self.enabled = False
         self._capture_timer.stop()
+        self._teardown_virtual_cam()
         for c in list(self._clients):
             try:
                 c.close()
@@ -90,21 +189,43 @@ class LANVideoServer(QObject):
             self._clients.remove(sock)
         self.client_count_changed.emit(len(self._clients))
 
+    def _grab_frame_pixmap(self) -> QPixmap:
+        mode = self.capture_source or "auto"
+
+        # 1. Virtual Camera (direct SLOBS/OBS active scene output)
+        if mode in ("auto", "virtual_cam") and isinstance(self._latest_cam_image, QImage) and not self._latest_cam_image.isNull():
+            return QPixmap.fromImage(self._latest_cam_image)
+
+        # 2. Streamlabs Desktop / OBS Studio Window
+        screens = QGuiApplication.screens()
+        if not screens:
+            return QPixmap()
+        scr = screens[self.monitor_index] if 0 <= self.monitor_index < len(screens) else screens[0]
+
+        if mode in ("auto", "slobs_window"):
+            hwnd = _find_slobs_obs_hwnd()
+            if hwnd:
+                pix = scr.grabWindow(hwnd)
+                if not pix.isNull():
+                    return pix
+
+        # 3. Monitor fallback
+        if mode in ("auto", "monitor"):
+            return scr.grabWindow(0)
+
+        return QPixmap()
+
     def _capture_and_broadcast(self):
         if not self.enabled or not self._clients:
             return
-        screens = QGuiApplication.screens()
-        if not screens:
-            return
-        scr = screens[self.monitor_index] if 0 <= self.monitor_index < len(screens) else screens[0]
-        pix = scr.grabWindow(0)
+        pix = self._grab_frame_pixmap()
         if pix.isNull():
             return
-        scaled = pix.scaled(480, 270, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
+        scaled = pix.scaled(640, 360, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.FastTransformation)
         ba = QByteArray()
         buf = QBuffer(ba)
         buf.open(QIODevice.OpenModeFlag.WriteOnly)
-        scaled.save(buf, "JPG", 62)
+        scaled.save(buf, "JPG", 68)
         raw = bytes(ba)
         for sock in list(self._clients):
             try:

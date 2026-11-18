@@ -1116,6 +1116,7 @@ class DirectorPanelWindow(QWidget):
     audio_toggled = pyqtSignal(int, str, bool)
     view_visibility_toggled = pyqtSignal(str, bool)
     orientation_changed = pyqtSignal(str)
+    video_feed_toggled = pyqtSignal(bool)
 
 
     DEFAULT_SCENES = [
@@ -1697,28 +1698,57 @@ class DirectorPanelWindow(QWidget):
                 """)
 
     def _on_video_feed_toggled(self, checked: bool):
-        if not hasattr(self, "lbl_video_feed"):
+        if not hasattr(self, "video_feed_container"):
+            self.video_feed_container = QWidget(self)
+            lay_vf = QVBoxLayout(self.video_feed_container)
+            lay_vf.setContentsMargins(0, 2, 0, 2)
+            lay_vf.setSpacing(3)
+
+            row_sz = QHBoxLayout()
+            row_sz.setSpacing(4)
+            lbl_sz = QLabel("Preview Size:")
+            lbl_sz.setStyleSheet("color: #a1a1aa; font-size: 9px;")
+            row_sz.addWidget(lbl_sz)
+            for tag, (pw, ph) in [("S", (240, 135)), ("M", (360, 202)), ("L", (480, 270)), ("XL", (640, 360))]:
+                b_sz = QPushButton(tag)
+                b_sz.setFixedSize(24, 16)
+                b_sz.setStyleSheet("QPushButton { background: #27272a; color: #e4e4e7; border: 1px solid #3f3f46; border-radius: 3px; font-size: 9px; } QPushButton:hover { border-color: #38bdf8; }")
+                b_sz.clicked.connect(lambda _c=False, w=pw, h=ph: self.set_lan_video_size(w, h))
+                row_sz.addWidget(b_sz)
+            row_sz.addStretch()
+            lay_vf.addLayout(row_sz)
+
             self.lbl_video_feed = QLabel("Connecting to LAN Video Feed...")
-            self.lbl_video_feed.setFixedSize(240, 135)
+            w, h = getattr(self, "_lan_video_size", (360, 202))
+            self.lbl_video_feed.setFixedSize(w, h)
             self.lbl_video_feed.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self.lbl_video_feed.setStyleSheet(
                 "background-color: #09090b; color: #71717a; border: 1px solid #3f3f46; border-radius: 6px; font-size: 10px;"
             )
+            lay_vf.addWidget(self.lbl_video_feed, 0, Qt.AlignmentFlag.AlignCenter)
+
             if hasattr(self, "main_layout"):
-                self.main_layout.insertWidget(1, self.lbl_video_feed, 0, Qt.AlignmentFlag.AlignCenter)
+                self.main_layout.insertWidget(1, self.video_feed_container, 0, Qt.AlignmentFlag.AlignCenter)
         if not hasattr(self, "_lan_video_client"):
             from lan_video_bridge import LANVideoClient
             self._lan_video_client = LANVideoClient(self)
             self._lan_video_client.frame_received.connect(self._on_lan_video_frame)
             self._lan_video_client.connection_changed.connect(self._on_lan_video_conn_changed)
 
-        self.lbl_video_feed.setVisible(checked)
+        self.video_feed_container.setVisible(checked)
         if checked:
             host = getattr(self, "_lan_video_host", "127.0.0.1")
             self._lan_video_client.connect_to_host(host)
         else:
             self._lan_video_client.disconnect_feed()
+        self.video_feed_toggled.emit(checked)
         self.adjustSize()
+
+    def set_lan_video_size(self, width: int, height: int):
+        self._lan_video_size = (int(width), int(height))
+        if hasattr(self, "lbl_video_feed"):
+            self.lbl_video_feed.setFixedSize(int(width), int(height))
+            self.adjustSize()
 
     def set_lan_video_host(self, host: str):
         self._lan_video_host = (host or "127.0.0.1").strip()

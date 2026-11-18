@@ -1154,17 +1154,39 @@ class DirectorTab(QWidget):
         lay_vid.addWidget(self.chk_lan_video)
 
         row_fps = QHBoxLayout()
-        row_fps.addWidget(QLabel("Preview FPS Throttle:"))
+        row_fps.addWidget(QLabel("FPS Throttle:"))
         self.combo_lan_fps = QComboBox()
         for fps_val, lbl_fps in [(1, "1 FPS (Ultra-Low CPU)"), (5, "5 FPS (Balanced)"), (10, "10 FPS (Smooth)"), (15, "15 FPS (High)")]:
             self.combo_lan_fps.addItem(lbl_fps, fps_val)
         self.combo_lan_fps.setCurrentIndex(1)  # 5 FPS default
         self.combo_lan_fps.currentIndexChanged.connect(self._on_lan_video_settings_changed)
         row_fps.addWidget(self.combo_lan_fps, 1)
+
+        row_fps.addWidget(QLabel("Preview Size:"))
+        self.combo_lan_size = QComboBox()
+        for sz_val, sz_lbl in [("240x135", "Small (240x135)"), ("360x202", "Medium (360x202)"), ("480x270", "Large (480x270)"), ("640x360", "XL (640x360)")]:
+            self.combo_lan_size.addItem(sz_lbl, sz_val)
+        self.combo_lan_size.setCurrentIndex(1)  # Medium default
+        self.combo_lan_size.currentIndexChanged.connect(self._on_lan_video_settings_changed)
+        row_fps.addWidget(self.combo_lan_size, 1)
+        lay_vid.addLayout(row_fps)
+
+        row_src = QHBoxLayout()
+        row_src.addWidget(QLabel("Capture Source:"))
+        self.combo_lan_source = QComboBox()
+        for src_val, src_lbl in [
+            ("auto", "Auto (SLOBS Virtual Cam → SLOBS Window → Monitor)"),
+            ("virtual_cam", "SLOBS / OBS Virtual Camera"),
+            ("slobs_window", "Streamlabs / OBS Window"),
+            ("monitor", "Target Monitor Screen"),
+        ]:
+            self.combo_lan_source.addItem(src_lbl, src_val)
+        self.combo_lan_source.currentIndexChanged.connect(self._on_lan_video_settings_changed)
+        row_src.addWidget(self.combo_lan_source, 1)
         self.lbl_lan_video_status = QLabel("● Offline")
         self.lbl_lan_video_status.setStyleSheet("font-size: 10px; color: #a1a1aa; font-weight: bold;")
-        row_fps.addWidget(self.lbl_lan_video_status)
-        lay_vid.addLayout(row_fps)
+        row_src.addWidget(self.lbl_lan_video_status)
+        lay_vid.addLayout(row_src)
         lay_remote_content.addWidget(grp_vid)
 
         # Compatibility hidden input for edit_allowed_twitch_user
@@ -2515,6 +2537,14 @@ class DirectorTab(QWidget):
             self.panel_window.resync_requested.connect(self._on_panel_resync_requested)
             self.panel_window.view_visibility_toggled.connect(self._on_panel_view_visibility_toggled)
             self.panel_window.orientation_changed.connect(self._on_panel_orientation_changed)
+            self.panel_window.video_feed_toggled.connect(self._on_panel_video_feed_toggled)
+        if hasattr(self, "combo_lan_size"):
+            sz_str = self.combo_lan_size.currentData() or "360x202"
+            try:
+                pw, ph = [int(x) for x in sz_str.split("x")]
+                self.panel_window.set_lan_video_size(pw, ph)
+            except Exception:
+                pass
 
         conn_mode = getattr(self, "conn_mode", "local")
         sb_engine = self.soundboard_engine if conn_mode == "local" else None
@@ -2728,6 +2758,8 @@ class DirectorTab(QWidget):
             "orientation": self.panel_window.orientation if self.is_panel_open() else getattr(self, "dock_orientation", "horizontal"),
             "lan_video_enabled": self.chk_lan_video.isChecked() if hasattr(self, "chk_lan_video") else False,
             "lan_video_fps": self.combo_lan_fps.currentData() if hasattr(self, "combo_lan_fps") else 5,
+            "lan_video_size": self.combo_lan_size.currentData() if hasattr(self, "combo_lan_size") else "360x202",
+            "lan_video_source": self.combo_lan_source.currentData() if hasattr(self, "combo_lan_source") else "auto",
         }
 
     def _on_panel_orientation_changed(self, mode: str):
@@ -2756,6 +2788,14 @@ class DirectorTab(QWidget):
                     fps_idx = self.combo_lan_fps.findData(int(d.get("lan_video_fps", 5)))
                     if fps_idx >= 0:
                         self.combo_lan_fps.setCurrentIndex(fps_idx)
+                if hasattr(self, "combo_lan_size"):
+                    sz_idx = self.combo_lan_size.findData(d.get("lan_video_size", "360x202"))
+                    if sz_idx >= 0:
+                        self.combo_lan_size.setCurrentIndex(sz_idx)
+                if hasattr(self, "combo_lan_source"):
+                    src_idx = self.combo_lan_source.findData(d.get("lan_video_source", "auto"))
+                    if src_idx >= 0:
+                        self.combo_lan_source.setCurrentIndex(src_idx)
 
                 self.enable_wan_p2p = d.get("enable_wan_p2p", False)
                 self.p2p_passkey_salt = d.get("p2p_passkey_salt", "")
@@ -3478,19 +3518,63 @@ class DirectorTab(QWidget):
                 pass
             self.lan_video_server = None
 
+    def _on_panel_video_feed_toggled(self, checked: bool):
+        if checked:
+            self._close_stream_browser()
+
+    def _close_stream_browser(self):
+        proc = getattr(self, "_browser_proc", None)
+        if proc:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+            self._browser_proc = None
+
+        if sys.platform == "win32":
+            try:
+                import win32gui, win32con
+                url = (self.edit_stream_url.text().strip() if hasattr(self, "edit_stream_url") else "").lower()
+                chan = url.rstrip("/").split("/")[-1] if url else ""
+
+                def _cb(hwnd, _):
+                    if not win32gui.IsWindowVisible(hwnd):
+                        return True
+                    title = (win32gui.GetWindowText(hwnd) or "").lower()
+                    if not title or "calyx" in title:
+                        return True
+                    if (chan and chan in title) or ("twitch" in title and any(b in title for b in ("chrome", "edge", "brave"))):
+                        win32gui.PostMessage(hwnd, win32con.WM_CLOSE, 0, 0)
+                    return True
+
+                win32gui.EnumWindows(_cb, None)
+            except Exception as e:
+                log_debug("DIRECTOR", f"Could not close stream preview browser window: {e}")
+
     def _on_lan_video_settings_changed(self):
         enabled = self.chk_lan_video.isChecked() if hasattr(self, "chk_lan_video") else False
         fps = int(self.combo_lan_fps.currentData() or 5) if hasattr(self, "combo_lan_fps") else 5
+        src_mode = (self.combo_lan_source.currentData() or "auto") if hasattr(self, "combo_lan_source") else "auto"
+        sz_str = (self.combo_lan_size.currentData() or "360x202") if hasattr(self, "combo_lan_size") else "360x202"
         mon_idx = self.combo_monitor.currentData() if hasattr(self, "combo_monitor") else 0
+
+        if self.panel_window and hasattr(self.panel_window, "set_lan_video_size"):
+            try:
+                pw, ph = [int(x) for x in sz_str.split("x")]
+                self.panel_window.set_lan_video_size(pw, ph)
+            except Exception:
+                pass
+
         if enabled:
             if self.lan_video_server is None:
                 from lan_video_bridge import LANVideoServer
-                self.lan_video_server = LANVideoServer(fps=fps, monitor_index=mon_idx or 0, parent=self)
+                self.lan_video_server = LANVideoServer(fps=fps, monitor_index=mon_idx or 0, capture_source=src_mode, parent=self)
                 self.lan_video_server.client_count_changed.connect(
                     lambda c: self.lbl_lan_video_status.setText(f"● Live ({c} viewer{'s' if c != 1 else ''})")
                     if hasattr(self, "lbl_lan_video_status") else None
                 )
             self.lan_video_server.set_monitor_index(mon_idx or 0)
+            self.lan_video_server.set_capture_source(src_mode)
             self.lan_video_server.set_fps(fps)
             if self.lan_video_server.start():
                 self.lbl_lan_video_status.setText(f"● Live ({fps} FPS)")
