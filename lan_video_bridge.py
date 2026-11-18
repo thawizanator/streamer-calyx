@@ -206,14 +206,56 @@ class LANVideoServer(QObject):
             hwnd = _find_slobs_obs_hwnd()
             if hwnd:
                 pix = scr.grabWindow(hwnd)
-                if not pix.isNull():
+                if not pix.isNull() and not self._is_mostly_black(pix):
                     return pix
+                # Electron/Direct3D windows often return black from grabWindow(hwnd);
+                # capture the desktop region at the window's screen rect instead.
+                rect_pix = self._grab_hwnd_screen_region(hwnd)
+                if not rect_pix.isNull():
+                    return rect_pix
 
         # 3. Monitor fallback
         if mode in ("auto", "monitor"):
             return scr.grabWindow(0)
 
         return QPixmap()
+
+    @staticmethod
+    def _is_mostly_black(pix: QPixmap) -> bool:
+        img = pix.toImage()
+        if img.isNull() or img.width() < 4 or img.height() < 4:
+            return True
+        w, h = img.width(), img.height()
+        for fx in (0.2, 0.5, 0.8):
+            for fy in (0.2, 0.5, 0.8):
+                c = img.pixelColor(int(w * fx), int(h * fy))
+                if (c.red() + c.green() + c.blue()) > 3:
+                    return False
+        return True
+
+    @staticmethod
+    def _grab_hwnd_screen_region(hwnd: int) -> QPixmap:
+        if sys.platform != "win32":
+            return QPixmap()
+        try:
+            import win32gui
+            l, t, r, b = win32gui.GetWindowRect(hwnd)
+            w, h = r - l, b - t
+            if w < 100 or h < 100:
+                return QPixmap()
+            cx, cy = l + w // 2, t + h // 2
+            screens = QGuiApplication.screens()
+            target_scr = screens[0] if screens else None
+            for s in screens:
+                if s.geometry().contains(cx, cy):
+                    target_scr = s
+                    break
+            if not target_scr:
+                return QPixmap()
+            sg = target_scr.geometry()
+            return target_scr.grabWindow(0, l - sg.x(), t - sg.y(), w, h)
+        except Exception:
+            return QPixmap()
 
     def _capture_and_broadcast(self):
         if not self.enabled or not self._clients:

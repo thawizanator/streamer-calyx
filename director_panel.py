@@ -1699,7 +1699,23 @@ class DirectorPanelWindow(QWidget):
 
     def _on_video_feed_toggled(self, checked: bool):
         if not hasattr(self, "video_feed_window"):
-            win = QWidget(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+            class _DraggableFeedWindow(QWidget):
+                def __init__(self):
+                    super().__init__(None, Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+                    self._drag_offset = None
+                def mousePressEvent(self, ev):
+                    if ev.button() == Qt.MouseButton.LeftButton:
+                        self._drag_offset = ev.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                        ev.accept()
+                def mouseMoveEvent(self, ev):
+                    if self._drag_offset is not None and (ev.buttons() & Qt.MouseButton.LeftButton):
+                        self.move(ev.globalPosition().toPoint() - self._drag_offset)
+                        ev.accept()
+                def mouseReleaseEvent(self, ev):
+                    self._drag_offset = None
+                    ev.accept()
+
+            win = _DraggableFeedWindow()
             win.setObjectName("LANVideoFeedWindow")
             win.setStyleSheet("QWidget#LANVideoFeedWindow { background-color: #121216; border: 2px solid #0284c7; border-radius: 8px; }")
             lay_vf = QVBoxLayout(win)
