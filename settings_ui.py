@@ -6,7 +6,7 @@ import webbrowser
 import urllib.request
 import urllib.parse
 import urllib.error
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                              QComboBox, QPushButton, QSlider, QColorDialog, 
                              QMessageBox, QLineEdit, QTabWidget, QCheckBox, 
