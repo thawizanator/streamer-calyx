@@ -554,16 +554,17 @@ class AutoClipEngine(QObject):
 
             # Update 20 Hz envelope buffer & compute 4-6 Hz laughter + 6-10 Hz banter cadence
             self._envelope_buffer.append(level)
-            if len(self._envelope_buffer) >= 16:
+            if vocal_vad and len(self._envelope_buffer) >= 16:
                 env = np.array(self._envelope_buffer, dtype=np.float32)
-                env = env - np.mean(env)
-                env_spec = np.abs(np.fft.rfft(env)) ** 2
-                env_freqs = np.fft.rfftfreq(env.size, d=0.05)  # 20 Hz frame rate
-                env_total = float(np.sum(env_spec[1:])) + 1e-9
-                laugh_mask = (env_freqs >= 4.0) & (env_freqs <= 6.0)
-                banter_mask = (env_freqs > 6.0) & (env_freqs <= 10.0)
-                result["laughter_cadence"] = min(1.0, float(np.sum(env_spec[laugh_mask])) / env_total * 2.2)
-                result["banter_cadence"] = min(1.0, float(np.sum(env_spec[banter_mask])) / env_total * 2.2)
+                if float(np.std(env)) >= 0.015:
+                    env = env - np.mean(env)
+                    env_spec = np.abs(np.fft.rfft(env)) ** 2
+                    env_freqs = np.fft.rfftfreq(env.size, d=0.05)  # 20 Hz frame rate
+                    env_total = float(np.sum(env_spec[1:])) + 1e-9
+                    laugh_mask = (env_freqs >= 4.0) & (env_freqs <= 6.0)
+                    banter_mask = (env_freqs > 6.0) & (env_freqs <= 10.0)
+                    result["laughter_cadence"] = min(1.0, float(np.sum(env_spec[laugh_mask])) / env_total * 2.2)
+                    result["banter_cadence"] = min(1.0, float(np.sum(env_spec[banter_mask])) / env_total * 2.2)
 
             # Autocorrelation Pitch Tracking (F0: 80 - 550 Hz) when vocal activity present
             if vocal_vad and hp_sig.size >= (sr // 40):
@@ -595,6 +596,17 @@ class AutoClipEngine(QObject):
                                 self._pitch_baseline = prof["f0_base"]
                             result["pitch_baseline"] = self._pitch_baseline
                             result["f0_ratio"] = f0_hz / max(60.0, self._pitch_baseline)
+
+            if vocal_vad and not is_thump:
+                inflect_boost = min(1.0, max(0.0, (result["f0_ratio"] - 1.0) * 1.5))
+                result["composite_hype"] = min(1.0, (
+                    0.60 * level
+                    + 0.15 * inflect_boost
+                    + 0.15 * result["laughter_cadence"]
+                    + 0.10 * min(1.0, vocal_ratio)
+                ))
+            else:
+                result["composite_hype"] = 0.0
 
             return result
         except Exception:

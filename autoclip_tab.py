@@ -1036,28 +1036,32 @@ class AutoClipTab(QWidget):
         anchor_pct = int(getattr(self.engine, "session_voice_anchor", 0.35) * 100)
         self.lbl_voice_anchor.setText(f"Session Voice Anchor: {anchor_pct}%")
 
-        # Update Segmented Levels Display
+        # Update Loudness bar & threshold marker
         lvl_pct = int(round(level * 100))
-        thr_pct = int(round(threshold * 100))
         self.bar_loudness.set_value(level)
         self.lbl_lv_loudness.setText(f"{lvl_pct}%")
-        self.bar_hype.set_value(level, threshold)
-        self.lbl_lv_hype.setText(f"{lvl_pct}% [Thresh: {thr_pct}%]")
+        self._last_threshold = threshold
 
     def _on_dsp_telemetry(self, tel: dict):
         f0 = tel.get("f0_hz", 0.0)
         vocal_vad = bool(tel.get("vocal_vad", False))
         vocal_ratio = float(tel.get("vocal_ratio", 0.0))
         laugh_cad = float(tel.get("laughter_cadence", 0.0))
+        comp_hype = float(tel.get("composite_hype", 0.0))
+        thresh = getattr(self, "_last_threshold", self.engine.current_threshold)
 
-        self.bar_vad.set_value(min(1.0, vocal_ratio * 1.6) if vocal_vad else vocal_ratio * 0.5)
-        self.lbl_lv_vad.setText(f"{int(min(100, vocal_ratio * 140))}% (Human Voice)" if vocal_vad else "Idle")
+        vad_val = min(1.0, vocal_ratio * 1.4) if vocal_vad else 0.0
+        self.bar_vad.set_value(vad_val)
+        self.lbl_lv_vad.setText(f"{int(round(vad_val * 100))}% (Human Voice)" if vocal_vad else "0% (Idle)")
 
         self.bar_f0.set_value(min(1.0, f0 / 550.0) if f0 > 0 else 0.0)
         self.lbl_lv_f0.setText(f"{f0:.0f} Hz ({tel.get('f0_ratio', 1.0):.2f}x)" if f0 > 0 else "0 Hz (Unvoiced)")
 
         self.bar_laughter.set_value(laugh_cad)
         self.lbl_lv_laughter.setText(f"{int(round(laugh_cad * 100))}%")
+
+        self.bar_hype.set_value(comp_hype, thresh)
+        self.lbl_lv_hype.setText(f"{int(round(comp_hype * 100))}% [Thresh: {int(round(thresh * 100))}%]")
 
         if tel.get("thump_rejected"):
             self.lbl_dsp_thump.setText("Desk Thump Filter: 🛡️ Rejected")
