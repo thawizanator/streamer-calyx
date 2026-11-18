@@ -47,7 +47,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from PyQt6.QtCore import Qt, QObject, pyqtSignal, QTimer
+from PyQt6.QtCore import Qt, QObject, QEvent, pyqtSignal, QTimer
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QSystemTrayIcon, QMenu, 
                              QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
                              QMessageBox, QDialog, QPushButton)
@@ -1542,6 +1542,27 @@ if __name__ == '__main__':
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
     app = QApplication(sys.argv)
     app.setWindowIcon(get_app_icon())
+
+    # Global Slider Mouse-Wheel Guard: ignore wheel events on unfocused sliders across all tabs/windows
+    from PyQt6.QtWidgets import QSlider, QAbstractScrollArea
+    class _SliderWheelGuard(QObject):
+        def eventFilter(self, obj, event):
+            if event.type() == QEvent.Type.Wheel and isinstance(obj, QSlider):
+                if obj.focusPolicy() == Qt.FocusPolicy.NoFocus:
+                    obj.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+                if not obj.hasFocus():
+                    event.ignore()
+                    p = obj.parentWidget()
+                    while p is not None:
+                        if isinstance(p, QAbstractScrollArea):
+                            QApplication.sendEvent(p.viewport(), event)
+                            break
+                        p = p.parentWidget()
+                    return True
+            return False
+
+    _slider_wheel_guard = _SliderWheelGuard(app)
+    app.installEventFilter(_slider_wheel_guard)
 
     if not check_single_instance():
         msg = QMessageBox()

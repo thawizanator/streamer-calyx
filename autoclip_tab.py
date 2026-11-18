@@ -1,10 +1,14 @@
 import os
+import json
+import time
+from datetime import datetime
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QRectF
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
     QCheckBox, QSlider, QPushButton, QGroupBox, QFrame,
     QColorDialog, QScrollArea, QMessageBox, QGridLayout, QSizePolicy,
-    QTabWidget, QLineEdit, QListWidget, QListWidgetItem, QFileDialog
+    QTabWidget, QLineEdit, QListWidget, QListWidgetItem, QFileDialog,
+    QTableWidget, QTableWidgetItem, QHeaderView
 )
 from PyQt6.QtGui import QPainter, QColor, QPen
 
@@ -23,6 +27,45 @@ from auto_clip_engine import AutoClipEngine
 from clip_vault import ClipVaultManager, ClipPreviewWidget
 
 
+class SegmentedBarWidget(QWidget):
+    """Segmented LED progress bar for live prosody DSP metrics (RMS, VAD, F0, Laughter, Hype)."""
+
+    def __init__(self, active_color: str = "#22c55e", show_threshold: bool = False, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(18)
+        self.setMinimumWidth(140)
+        self.active_color = QColor(active_color)
+        self.inactive_color = QColor("#222228")
+        self.show_threshold = show_threshold
+        self.value = 0.0
+        self.threshold = 0.75
+
+    def set_value(self, val: float, threshold: float = None):
+        self.value = max(0.0, min(1.0, float(val)))
+        if threshold is not None:
+            self.threshold = max(0.0, min(1.0, float(threshold)))
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        w = self.width()
+        h = self.height()
+        num_seg = 36
+        gap = 2
+        seg_w = max(2.0, (w - (num_seg - 1) * gap) / num_seg)
+        lit = int(round(self.value * num_seg))
+        painter.setPen(Qt.PenStyle.NoPen)
+        for i in range(num_seg):
+            x = i * (seg_w + gap)
+            painter.setBrush(self.active_color if i < lit else self.inactive_color)
+            painter.drawRoundedRect(QRectF(x, 2, seg_w, h - 4), 2, 2)
+        if self.show_threshold:
+            tx = int(self.threshold * w)
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            painter.drawLine(tx, 0, tx, h)
+
+
 class DiscordVUMeterWidget(QWidget):
     """
     Discord-style interactive 4-zone Audio VU Meter.
@@ -36,10 +79,10 @@ class DiscordVUMeterWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFixedHeight(36)
-        self.setMinimumWidth(260)
+        self.setMinimumWidth(200)
 
-        self.current_level = 0.0      # 0.0 to 1.0
-        self.display_level = 0.0      # Smooth decay
+        self.current_level = 0.0
+        self.display_level = 0.0
         self.current_zone = AutoClipEngine.ZONE_GREEN
         self.baseline = 0.05
         self.threshold = 0.70
@@ -79,7 +122,7 @@ class DiscordVUMeterWidget(QWidget):
         num_segments = 40
         seg_gap = 2
         total_gaps = (num_segments - 1) * seg_gap
-        seg_w = (w - total_gaps) / num_segments
+        seg_w = max(2.0, (w - total_gaps) / num_segments)
 
         lit_segments = int(self.display_level * num_segments)
         thresh_seg = int(self.threshold * num_segments)
@@ -113,7 +156,7 @@ class DiscordVUMeterWidget(QWidget):
 
 class AutoClipTab(QWidget):
     """
-    Phase 10 Dual-Tab Calibration GUI & Clip Vault for Auto-Clip & Stream Markers.
+    Phase 10 Calibration GUI, Live Prosody Levels, Interactive Trigger History & Clip Vault.
     """
     settings_changed = pyqtSignal()
 
@@ -122,15 +165,19 @@ class AutoClipTab(QWidget):
         self.main_win = main_win
         self.engine = engine or AutoClipEngine(self)
         self.clip_vault = ClipVaultManager(self.engine, self)
+        self._last_thump_log_ts = 0.0
 
         self._build_ui()
         self._load_from_engine()
+        self._load_history_table()
 
         self.engine.level_updated.connect(self._on_level_updated)
         self.engine.dsp_telemetry_updated.connect(self._on_dsp_telemetry)
         self.engine.cooldown_tick.connect(self._on_cooldown_tick)
         self.engine.status_changed.connect(self._on_status_changed)
         self.engine.marker_triggered.connect(self._on_marker_triggered)
+        self.engine.secondary_peak_logged.connect(self._on_secondary_logged)
+        self.engine.possible_peak_logged.connect(self._on_possible_logged)
         self.clip_vault.clips_updated.connect(self._on_vault_clips_updated)
 
     def _build_ui(self):
@@ -145,16 +192,17 @@ class AutoClipTab(QWidget):
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
 
         content = QWidget()
+        content.setMinimumWidth(0)
         lay = QVBoxLayout(content)
-        lay.setContentsMargins(12, 12, 12, 12)
-        lay.setSpacing(10)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(8)
 
         # ------------------ HEADER ------------------
         hdr = QVBoxLayout()
         hdr.setSpacing(4)
 
         lbl_title = QLabel("🎙️ Acoustic Prosody Auto-Clip & Clip Vault")
-        lbl_title.setStyleSheet("font-size: 16px; font-weight: bold;")
+        lbl_title.setStyleSheet("font-size: 15px; font-weight: bold;")
         hdr.addWidget(lbl_title)
 
         lbl_sub = QLabel(
@@ -169,10 +217,10 @@ class AutoClipTab(QWidget):
         # ------------------ STREAMER MODE LOCK BANNER ------------------
         self.banner_streamer_mode = QFrame()
         self.banner_streamer_mode.setStyleSheet(
-            "QFrame { background-color: #3f1d2b; border: 1px solid #f43f5e; border-radius: 6px; padding: 8px; }"
+            "QFrame { background-color: #3f1d2b; border: 1px solid #f43f5e; border-radius: 6px; padding: 6px; }"
         )
         lay_banner = QHBoxLayout(self.banner_streamer_mode)
-        lay_banner.setContentsMargins(8, 6, 8, 6)
+        lay_banner.setContentsMargins(8, 4, 8, 4)
         lbl_banner = QLabel("🔒 Streamer Mode is OFF: Auto-Clip is disabled until Streamer Mode or Content Creator Mode is enabled.")
         lbl_banner.setStyleSheet("color: #fda4af; font-weight: bold; font-size: 11px;")
         lbl_banner.setWordWrap(True)
@@ -182,8 +230,8 @@ class AutoClipTab(QWidget):
 
         # ------------------ MASTER TOGGLE + LIVE VU METER ------------------
         top_bar = QHBoxLayout()
-        self.switch_master_enable = QCheckBox("Enable Acoustic Auto-Clip & Marker Detection")
-        self.switch_master_enable.setStyleSheet("font-weight: bold; font-size: 13px;")
+        self.switch_master_enable = QCheckBox("Enable Acoustic Auto-Clip")
+        self.switch_master_enable.setStyleSheet("font-weight: bold; font-size: 12px;")
         self.switch_master_enable.toggled.connect(self._on_master_enable_toggled)
         top_bar.addWidget(self.switch_master_enable)
         top_bar.addStretch()
@@ -200,7 +248,7 @@ class AutoClipTab(QWidget):
 
         self.grp_meter = QGroupBox("Live Audio Monitoring & 4-Zone Meter")
         lay_m = QVBoxLayout(self.grp_meter)
-        lay_m.setSpacing(6)
+        lay_m.setSpacing(4)
 
         self.vu_meter = DiscordVUMeterWidget(self)
         lay_m.addWidget(self.vu_meter)
@@ -224,17 +272,16 @@ class AutoClipTab(QWidget):
         lay_m.addLayout(row_m_info)
         lay.addWidget(self.grp_meter)
 
-        # ------------------ 3-TAB CALIBRATION & VAULT ------------------
+        # ------------------ 4-TAB CALIBRATION, HISTORY & VAULT ------------------
         self.sub_tabs = QTabWidget()
         self.sub_tabs.setDocumentMode(True)
+        self.sub_tabs.setUsesScrollButtons(True)
+        self.sub_tabs.setMinimumWidth(0)
 
-        tab_basic = self._build_basic_tab()
-        tab_dsp = self._build_dsp_tab()
-        tab_vault = self._build_vault_tab()
-
-        self.sub_tabs.addTab(tab_basic, "🎛️ Basic Tuning")
-        self.sub_tabs.addTab(tab_dsp, "🧬 Advanced DSP")
-        self.sub_tabs.addTab(tab_vault, "🗄️ Clip Vault & Export")
+        self.sub_tabs.addTab(self._build_basic_tab(), "🎛️ Basic Tuning")
+        self.sub_tabs.addTab(self._build_dsp_tab(), "🧬 Advanced DSP")
+        self.sub_tabs.addTab(self._build_history_tab(), "📜 Trigger History")
+        self.sub_tabs.addTab(self._build_vault_tab(), "🗄️ Clip Vault")
         lay.addWidget(self.sub_tabs)
 
         self.cards = [self.grp_meter, self.sub_tabs]
@@ -245,18 +292,21 @@ class AutoClipTab(QWidget):
 
     def _build_basic_tab(self) -> QWidget:
         w = QWidget()
+        w.setMinimumWidth(0)
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(6, 10, 6, 6)
-        lay.setSpacing(10)
+        lay.setContentsMargins(4, 8, 4, 4)
+        lay.setSpacing(8)
 
-        # Device & Sensitivity Card
         grp_sens = QGroupBox("Input Device, Thresholds & Cooldown")
         lay_s = QVBoxLayout(grp_sens)
-        lay_s.setSpacing(8)
+        lay_s.setSpacing(6)
 
         row_dev = QHBoxLayout()
-        row_dev.addWidget(QLabel("Audio Input Device:"))
+        row_dev.addWidget(QLabel("Input Device:"))
         self.combo_device = QComboBox()
+        self.combo_device.setMinimumWidth(0)
+        self.combo_device.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.combo_device.setMinimumContentsLength(16)
         self.combo_device.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.combo_device.currentIndexChanged.connect(self._on_device_changed)
         row_dev.addWidget(self.combo_device, 1)
@@ -274,7 +324,7 @@ class AutoClipTab(QWidget):
         self.slider_gain.valueChanged.connect(self._on_gain_changed)
         row_gain.addWidget(self.slider_gain, 1)
         self.lbl_gain = QLabel("100%")
-        self.lbl_gain.setFixedWidth(48)
+        self.lbl_gain.setFixedWidth(44)
         row_gain.addWidget(self.lbl_gain)
         lay_s.addLayout(row_gain)
 
@@ -283,50 +333,50 @@ class AutoClipTab(QWidget):
         lay_s.addWidget(self.chk_auto_sens)
 
         row_off = QHBoxLayout()
-        self.lbl_offset_title = QLabel("Trigger Offset (+ above baseline):")
+        self.lbl_offset_title = QLabel("Trigger Offset (+ baseline):")
         row_off.addWidget(self.lbl_offset_title)
         self.slider_offset = QSlider(Qt.Orientation.Horizontal)
         self.slider_offset.setRange(15, 60)
         self.slider_offset.valueChanged.connect(self._on_offset_changed)
         row_off.addWidget(self.slider_offset, 1)
         self.lbl_offset = QLabel("+30%")
-        self.lbl_offset.setFixedWidth(48)
+        self.lbl_offset.setFixedWidth(44)
         row_off.addWidget(self.lbl_offset)
         lay_s.addLayout(row_off)
 
         row_man = QHBoxLayout()
-        self.lbl_thresh_title = QLabel("Manual Trigger Threshold:")
+        self.lbl_thresh_title = QLabel("Manual Threshold:")
         row_man.addWidget(self.lbl_thresh_title)
         self.slider_thresh = QSlider(Qt.Orientation.Horizontal)
         self.slider_thresh.setRange(40, 100)
         self.slider_thresh.valueChanged.connect(self._on_manual_thresh_changed)
         row_man.addWidget(self.slider_thresh, 1)
         self.lbl_thresh = QLabel("70%")
-        self.lbl_thresh.setFixedWidth(48)
+        self.lbl_thresh.setFixedWidth(44)
         row_man.addWidget(self.lbl_thresh)
         lay_s.addLayout(row_man)
 
         row_dur = QHBoxLayout()
-        row_dur.addWidget(QLabel("Min Peak Duration (ms):"))
+        row_dur.addWidget(QLabel("Min Peak Duration:"))
         self.slider_duration = QSlider(Qt.Orientation.Horizontal)
         self.slider_duration.setRange(100, 800)
         self.slider_duration.setSingleStep(50)
         self.slider_duration.valueChanged.connect(self._on_duration_changed)
         row_dur.addWidget(self.slider_duration, 1)
         self.lbl_duration = QLabel("250 ms")
-        self.lbl_duration.setFixedWidth(56)
+        self.lbl_duration.setFixedWidth(52)
         row_dur.addWidget(self.lbl_duration)
         lay_s.addLayout(row_dur)
 
         row_cd = QHBoxLayout()
-        row_cd.addWidget(QLabel("Anti-Spam Cooldown (sec):"))
+        row_cd.addWidget(QLabel("Anti-Spam Cooldown:"))
         self.slider_cooldown = QSlider(Qt.Orientation.Horizontal)
         self.slider_cooldown.setRange(15, 120)
         self.slider_cooldown.setSingleStep(5)
         self.slider_cooldown.valueChanged.connect(self._on_cooldown_cfg_changed)
         row_cd.addWidget(self.slider_cooldown, 1)
         self.lbl_cooldown_cfg = QLabel("60 s")
-        self.lbl_cooldown_cfg.setFixedWidth(56)
+        self.lbl_cooldown_cfg.setFixedWidth(52)
         row_cd.addWidget(self.lbl_cooldown_cfg)
         lay_s.addLayout(row_cd)
 
@@ -353,26 +403,24 @@ class AutoClipTab(QWidget):
         self.chk_chime.toggled.connect(self._on_chime_toggled)
         lay_a.addWidget(self.chk_chime)
 
-        row_tpl = QHBoxLayout()
-        row_tpl.addWidget(QLabel("Marker Template:"))
+        grid_tpl = QGridLayout()
+        grid_tpl.addWidget(QLabel("Marker Template:"), 0, 0)
         self.txt_marker_template = QLineEdit()
         self.txt_marker_template.setPlaceholderText("{icon} {tag} [{game}]")
         self.txt_marker_template.textChanged.connect(self._on_marker_template_changed)
-        row_tpl.addWidget(self.txt_marker_template, 1)
-        row_tpl.addWidget(QLabel("Game:"))
+        grid_tpl.addWidget(self.txt_marker_template, 0, 1)
+
+        grid_tpl.addWidget(QLabel("Game Title:"), 1, 0)
         self.txt_game_title = QLineEdit()
         self.txt_game_title.setPlaceholderText("Optional game name")
-        self.txt_game_title.setMaximumWidth(150)
         self.txt_game_title.textChanged.connect(self._on_game_title_changed)
-        row_tpl.addWidget(self.txt_game_title)
-        lay_a.addLayout(row_tpl)
+        grid_tpl.addWidget(self.txt_game_title, 1, 1)
 
+        grid_tpl.addWidget(QLabel("Fallback Label:"), 2, 0)
         row_col = QHBoxLayout()
-        row_col.addWidget(QLabel("Fallback Label:"))
         self.txt_marker_desc = QLineEdit()
-        self.txt_marker_desc.setMaximumWidth(180)
         self.txt_marker_desc.textChanged.connect(self._on_marker_desc_changed)
-        row_col.addWidget(self.txt_marker_desc)
+        row_col.addWidget(self.txt_marker_desc, 1)
         self.btn_color = QPushButton("Alert Color")
         self.btn_color.setFixedHeight(26)
         self.btn_color.clicked.connect(self._on_pick_color)
@@ -381,12 +429,11 @@ class AutoClipTab(QWidget):
         self.btn_test_flash.setFixedHeight(26)
         self.btn_test_flash.clicked.connect(self._on_test_flash_clicked)
         row_col.addWidget(self.btn_test_flash)
-        row_col.addStretch()
-        lay_a.addLayout(row_col)
+        grid_tpl.addLayout(row_col, 2, 1)
+        lay_a.addLayout(grid_tpl)
 
         lay.addWidget(grp_act)
 
-        # Scene Whitelist
         self.grp_scenes = QGroupBox("Active Scene Whitelist (Paused on other scenes like BRB)")
         lay_sc = QVBoxLayout(self.grp_scenes)
         self.lay_scene_grid = QGridLayout()
@@ -395,7 +442,6 @@ class AutoClipTab(QWidget):
         self._populate_scene_checkboxes()
         lay.addWidget(self.grp_scenes)
 
-        # Log Quick Actions
         row_log = QHBoxLayout()
         self.btn_open_log = QPushButton("📂 Open cooldown_clips.txt")
         self.btn_open_log.clicked.connect(self.engine.open_log_file)
@@ -411,28 +457,84 @@ class AutoClipTab(QWidget):
 
     def _build_dsp_tab(self) -> QWidget:
         w = QWidget()
+        w.setMinimumWidth(0)
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(6, 10, 6, 6)
-        lay.setSpacing(10)
+        lay.setContentsMargins(4, 8, 4, 4)
+        lay.setSpacing(8)
 
-        # Live Prosody DSP Telemetry Card
-        grp_tel = QGroupBox("Live Acoustic Prosody DSP Telemetry (20 Hz)")
-        grid_tel = QGridLayout(grp_tel)
-        self.lbl_dsp_f0 = QLabel("F0 Pitch: -- Hz")
-        self.lbl_dsp_inflection = QLabel("Inflection: 1.00x")
-        self.lbl_dsp_laughter = QLabel("Laughter (4-6 Hz): 0%")
-        self.lbl_dsp_vad = QLabel("Vocal VAD: Idle")
+        # Live Segmented Prosody Levels Display (from tester app)
+        grp_levels = QGroupBox("Live Acoustic Prosody Levels (20 Hz DSP)")
+        lay_lv = QVBoxLayout(grp_levels)
+        lay_lv.setSpacing(6)
+
+        # 1. Loudness (RMS/Peak)
+        r1 = QHBoxLayout()
+        r1.addWidget(QLabel("Loudness (RMS/Peak):"))
+        r1.addStretch()
+        self.lbl_lv_loudness = QLabel("0%")
+        self.lbl_lv_loudness.setStyleSheet("color: #eab308; font-weight: bold;")
+        r1.addWidget(self.lbl_lv_loudness)
+        lay_lv.addLayout(r1)
+        self.bar_loudness = SegmentedBarWidget("#eab308")
+        lay_lv.addWidget(self.bar_loudness)
+
+        # 2. Voice Activity (VAD)
+        r2 = QHBoxLayout()
+        r2.addWidget(QLabel("Voice Activity (VAD):"))
+        r2.addStretch()
+        self.lbl_lv_vad = QLabel("0% (Idle)")
+        self.lbl_lv_vad.setStyleSheet("color: #22c55e; font-weight: bold;")
+        r2.addWidget(self.lbl_lv_vad)
+        lay_lv.addLayout(r2)
+        self.bar_vad = SegmentedBarWidget("#22c55e")
+        lay_lv.addWidget(self.bar_vad)
+
+        # 3. Pitch Tracking (F0)
+        r3 = QHBoxLayout()
+        r3.addWidget(QLabel("Pitch Tracking (F0):"))
+        r3.addStretch()
+        self.lbl_lv_f0 = QLabel("0 Hz (Unvoiced)")
+        self.lbl_lv_f0.setStyleSheet("color: #a855f7; font-weight: bold;")
+        r3.addWidget(self.lbl_lv_f0)
+        lay_lv.addLayout(r3)
+        self.bar_f0 = SegmentedBarWidget("#a855f7")
+        lay_lv.addWidget(self.bar_f0)
+
+        # 4. Laughter Cadence (4-6Hz)
+        r4 = QHBoxLayout()
+        r4.addWidget(QLabel("Laughter Cadence (4-6Hz):"))
+        r4.addStretch()
+        self.lbl_lv_laughter = QLabel("0%")
+        self.lbl_lv_laughter.setStyleSheet("color: #f97316; font-weight: bold;")
+        r4.addWidget(self.lbl_lv_laughter)
+        lay_lv.addLayout(r4)
+        self.bar_laughter = SegmentedBarWidget("#f97316")
+        lay_lv.addWidget(self.bar_laughter)
+
+        # 5. Composite Hype Score
+        r5 = QHBoxLayout()
+        lbl_ch = QLabel("🔥 COMPOSITE HYPE SCORE:")
+        lbl_ch.setStyleSheet("font-weight: bold;")
+        r5.addWidget(lbl_ch)
+        r5.addStretch()
+        self.lbl_lv_hype = QLabel("0% [Thresh: 70%]")
+        self.lbl_lv_hype.setStyleSheet("color: #ef4444; font-weight: bold;")
+        r5.addWidget(self.lbl_lv_hype)
+        lay_lv.addLayout(r5)
+        self.bar_hype = SegmentedBarWidget("#ef4444", show_threshold=True)
+        lay_lv.addWidget(self.bar_hype)
+
+        row_cls = QHBoxLayout()
+        self.lbl_dsp_classified = QLabel("🎙️ Classified: Idle / Ambient")
+        self.lbl_dsp_classified.setStyleSheet("color: #38bdf8; font-weight: bold;")
+        row_cls.addWidget(self.lbl_dsp_classified)
+        row_cls.addStretch()
         self.lbl_dsp_thump = QLabel("Desk Thump Filter: Clear")
-        self.lbl_dsp_reaction = QLabel("Last Reaction: None yet")
-        self.lbl_dsp_reaction.setStyleSheet("font-weight: bold; color: #f59e0b;")
+        self.lbl_dsp_thump.setStyleSheet("font-size: 11px; color: #a1a1aa;")
+        row_cls.addWidget(self.lbl_dsp_thump)
+        lay_lv.addLayout(row_cls)
 
-        grid_tel.addWidget(self.lbl_dsp_f0, 0, 0)
-        grid_tel.addWidget(self.lbl_dsp_inflection, 0, 1)
-        grid_tel.addWidget(self.lbl_dsp_laughter, 1, 0)
-        grid_tel.addWidget(self.lbl_dsp_vad, 1, 1)
-        grid_tel.addWidget(self.lbl_dsp_thump, 2, 0)
-        grid_tel.addWidget(self.lbl_dsp_reaction, 2, 1)
-        lay.addWidget(grp_tel)
+        lay.addWidget(grp_levels)
 
         # Voice Profiles & Session Anchor
         grp_vp = QGroupBox("Voice Profile & Session Anchor")
@@ -440,6 +542,7 @@ class AutoClipTab(QWidget):
         row_vp = QHBoxLayout()
         row_vp.addWidget(QLabel("Voice Profile:"))
         self.combo_voice_profile = QComboBox()
+        self.combo_voice_profile.setMinimumWidth(0)
         for key, info in AutoClipEngine.VOICE_PROFILES.items():
             self.combo_voice_profile.addItem(info["label"], key)
         self.combo_voice_profile.currentIndexChanged.connect(self._on_voice_profile_changed)
@@ -465,17 +568,17 @@ class AutoClipTab(QWidget):
         self.slider_thump.valueChanged.connect(self._on_thump_changed)
         lay_th.addWidget(self.slider_thump, 1)
         self.lbl_thump = QLabel("55%")
-        self.lbl_thump.setFixedWidth(48)
+        self.lbl_thump.setFixedWidth(44)
         lay_th.addWidget(self.lbl_thump)
         lay.addWidget(grp_thump)
 
-        # 1-Click Game Genre Presets
+        # 1-Click Game Genre Presets (2x2 Grid so it never clips horizontally)
         grp_presets = QGroupBox("1-Click Game Genre Presets")
-        row_pr = QHBoxLayout(grp_presets)
-        for key, info in AutoClipEngine.GENRE_PRESETS.items():
+        grid_pr = QGridLayout(grp_presets)
+        for idx, (key, info) in enumerate(AutoClipEngine.GENRE_PRESETS.items()):
             btn = QPushButton(info["label"])
             btn.clicked.connect(lambda _chk=False, k=key: self._on_genre_preset_clicked(k))
-            row_pr.addWidget(btn)
+            grid_pr.addWidget(btn, idx // 2, idx % 2)
         lay.addWidget(grp_presets)
 
         # 8-Zone Classifier Legend
@@ -490,18 +593,61 @@ class AutoClipTab(QWidget):
         lay.addStretch()
         return w
 
-    def _build_vault_tab(self) -> QWidget:
+    def _build_history_tab(self) -> QWidget:
         w = QWidget()
+        w.setMinimumWidth(0)
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(6, 10, 6, 6)
+        lay.setContentsMargins(4, 8, 4, 4)
         lay.setSpacing(8)
 
-        # Replay Folder Watcher
+        grp_hist = QGroupBox("Interactive Trigger History & Payloads")
+        lay_h = QVBoxLayout(grp_hist)
+
+        self.tbl_history = QTableWidget(0, 7)
+        self.tbl_history.setHorizontalHeaderLabels([
+            "Time", "Date", "Vocal Reaction Tag", "Hype", "Game", "Stream Pos", "Status"
+        ])
+        self.tbl_history.setAlternatingRowColors(True)
+        self.tbl_history.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.tbl_history.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.tbl_history.setMinimumHeight(240)
+        hdr = self.tbl_history.horizontalHeader()
+        hdr.setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        hdr.setStretchLastSection(True)
+        self.tbl_history.setColumnWidth(0, 68)
+        self.tbl_history.setColumnWidth(1, 84)
+        self.tbl_history.setColumnWidth(2, 165)
+        self.tbl_history.setColumnWidth(3, 52)
+        self.tbl_history.setColumnWidth(4, 95)
+        self.tbl_history.setColumnWidth(5, 80)
+        lay_h.addWidget(self.tbl_history)
+
+        row_btns = QHBoxLayout()
+        btn_clear = QPushButton("🗑️ Clear Events")
+        btn_clear.clicked.connect(self._on_clear_history_events)
+        row_btns.addWidget(btn_clear)
+
+        btn_export_json = QPushButton("💾 Export Session Log (.json)")
+        btn_export_json.clicked.connect(self._on_export_history_json)
+        row_btns.addWidget(btn_export_json)
+        row_btns.addStretch()
+        lay_h.addLayout(row_btns)
+
+        lay.addWidget(grp_hist)
+        return w
+
+    def _build_vault_tab(self) -> QWidget:
+        w = QWidget()
+        w.setMinimumWidth(0)
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(4, 8, 4, 4)
+        lay.setSpacing(8)
+
         grp_dir = QGroupBox("OBS / Streamlabs Replay Folder Watcher")
         lay_d = QVBoxLayout(grp_dir)
         row_dir = QHBoxLayout()
         self.txt_replay_dir = QLineEdit()
-        self.txt_replay_dir.setPlaceholderText("Select your OBS / Streamlabs Replay Buffer output folder...")
+        self.txt_replay_dir.setPlaceholderText("Select OBS / Streamlabs Replay Buffer folder...")
         self.txt_replay_dir.editingFinished.connect(self._on_replay_dir_changed)
         row_dir.addWidget(self.txt_replay_dir, 1)
 
@@ -519,7 +665,6 @@ class AutoClipTab(QWidget):
         lay_d.addWidget(self.chk_auto_rename)
         lay.addWidget(grp_dir)
 
-        # Matched Replay Browser + Embedded Player
         self.list_clips = QListWidget()
         self.list_clips.setMinimumHeight(110)
         self.list_clips.setMaximumHeight(160)
@@ -529,18 +674,17 @@ class AutoClipTab(QWidget):
         self.preview_widget = ClipPreviewWidget(self)
         lay.addWidget(self.preview_widget)
 
-        # Video Editor Export Assistant
         grp_exp = QGroupBox("Video Editor Export Assistant (Session & Reaction Markers)")
         row_exp = QHBoxLayout(grp_exp)
-        btn_yt = QPushButton("📺 YouTube Chapters (.txt)")
+        btn_yt = QPushButton("📺 YouTube (.txt)")
         btn_yt.clicked.connect(lambda: self._export_markers("yt"))
         row_exp.addWidget(btn_yt)
 
-        btn_edl = QPushButton("🎬 DaVinci / Premiere (.edl)")
+        btn_edl = QPushButton("🎬 DaVinci/Premiere (.edl)")
         btn_edl.clicked.connect(lambda: self._export_markers("edl"))
         row_exp.addWidget(btn_edl)
 
-        btn_csv = QPushButton("📊 CapCut / Timeline (.csv)")
+        btn_csv = QPushButton("📊 CapCut/CSV (.csv)")
         btn_csv.clicked.connect(lambda: self._export_markers("csv"))
         row_exp.addWidget(btn_csv)
         lay.addWidget(grp_exp)
@@ -663,6 +807,54 @@ class AutoClipTab(QWidget):
         self.btn_color.setStyleSheet(
             f"background-color: {hex_color}; color: #000000; font-weight: bold; border-radius: 4px; padding: 4px 10px;"
         )
+
+    # ------------------ History Table Helpers ------------------
+
+    def _load_history_table(self):
+        self.tbl_history.setRowCount(0)
+        for entry in self.engine.get_reaction_history():
+            self._append_history_row(
+                created_at=entry.get("created_at", ""),
+                tag=f"{entry.get('reaction_icon', '💬')} {entry.get('reaction_label', 'Highlight')}",
+                hype_pct=f"{int(round(float(entry.get('level', 0.0)) * 100))}%",
+                game=getattr(self.engine, "game_title", "") or "Local Session",
+                stream_pos=entry.get("timestamp_str", "00:00"),
+                status="Primary Trigger" if entry.get("kind") == "primary" else "Cooldown Secondary",
+                color_hex="#f59e0b" if entry.get("kind") == "primary" else "#38bdf8",
+            )
+
+    def _append_history_row(self, created_at: str, tag: str, hype_pct: str, game: str,
+                            stream_pos: str, status: str, color_hex: str = "#e4e4e7"):
+        try:
+            dt = datetime.fromisoformat(created_at) if created_at else datetime.now()
+            t_str = dt.strftime("%H:%M:%S")
+            d_str = dt.strftime("%Y-%m-%d")
+        except Exception:
+            t_str = datetime.now().strftime("%H:%M:%S")
+            d_str = datetime.now().strftime("%Y-%m-%d")
+
+        row = self.tbl_history.rowCount()
+        self.tbl_history.insertRow(row)
+        vals = [t_str, d_str, tag, hype_pct, game, stream_pos, status]
+        col = QColor(color_hex)
+        for c_idx, text in enumerate(vals):
+            item = QTableWidgetItem(str(text))
+            if c_idx in (2, 3, 6):
+                item.setForeground(col)
+            self.tbl_history.setItem(row, c_idx, item)
+        self.tbl_history.scrollToBottom()
+
+    def _on_clear_history_events(self):
+        self.engine.clear_reaction_history()
+        self.tbl_history.setRowCount(0)
+
+    def _on_export_history_json(self):
+        history = self.engine.get_reaction_history()
+        out_path, _ = QFileDialog.getSaveFileName(self, "Export Session Trigger Log", "calyx_trigger_history.json", "JSON (*.json)")
+        if out_path:
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(history, f, indent=2)
+            QMessageBox.information(self, "Export Complete", f"Exported {len(history)} trigger event(s) to:\n{out_path}")
 
     # ------------------ Slots ------------------
 
@@ -842,24 +1034,57 @@ class AutoClipTab(QWidget):
     def _on_level_updated(self, level: float, zone: int, baseline: float, threshold: float):
         self.vu_meter.update_meter(level, zone, baseline, threshold)
         anchor_pct = int(getattr(self.engine, "session_voice_anchor", 0.35) * 100)
-        if hasattr(self, "lbl_voice_anchor"):
-            self.lbl_voice_anchor.setText(f"Session Voice Anchor: {anchor_pct}%")
+        self.lbl_voice_anchor.setText(f"Session Voice Anchor: {anchor_pct}%")
+
+        # Update Segmented Levels Display
+        lvl_pct = int(round(level * 100))
+        thr_pct = int(round(threshold * 100))
+        self.bar_loudness.set_value(level)
+        self.lbl_lv_loudness.setText(f"{lvl_pct}%")
+        self.bar_hype.set_value(level, threshold)
+        self.lbl_lv_hype.setText(f"{lvl_pct}% [Thresh: {thr_pct}%]")
 
     def _on_dsp_telemetry(self, tel: dict):
         f0 = tel.get("f0_hz", 0.0)
-        self.lbl_dsp_f0.setText(f"F0 Pitch: {f0:.0f} Hz" if f0 > 0 else "F0 Pitch: -- Hz")
-        self.lbl_dsp_inflection.setText(f"Inflection: {tel.get('f0_ratio', 1.0):.2f}x")
-        self.lbl_dsp_laughter.setText(f"Laughter (4-6 Hz): {int(tel.get('laughter_cadence', 0.0) * 100)}%")
-        self.lbl_dsp_vad.setText("Vocal VAD: Active" if tel.get("vocal_vad") else "Vocal VAD: Idle")
+        vocal_vad = bool(tel.get("vocal_vad", False))
+        vocal_ratio = float(tel.get("vocal_ratio", 0.0))
+        laugh_cad = float(tel.get("laughter_cadence", 0.0))
+
+        self.bar_vad.set_value(min(1.0, vocal_ratio * 1.6) if vocal_vad else vocal_ratio * 0.5)
+        self.lbl_lv_vad.setText(f"{int(min(100, vocal_ratio * 140))}% (Human Voice)" if vocal_vad else "Idle")
+
+        self.bar_f0.set_value(min(1.0, f0 / 550.0) if f0 > 0 else 0.0)
+        self.lbl_lv_f0.setText(f"{f0:.0f} Hz ({tel.get('f0_ratio', 1.0):.2f}x)" if f0 > 0 else "0 Hz (Unvoiced)")
+
+        self.bar_laughter.set_value(laugh_cad)
+        self.lbl_lv_laughter.setText(f"{int(round(laugh_cad * 100))}%")
+
         if tel.get("thump_rejected"):
             self.lbl_dsp_thump.setText("Desk Thump Filter: 🛡️ Rejected")
-            self.lbl_dsp_thump.setStyleSheet("color: #f97316; font-weight: bold;")
+            self.lbl_dsp_thump.setStyleSheet("font-size: 11px; color: #f97316; font-weight: bold;")
+            now = time.time()
+            if now - self._last_thump_log_ts >= 3.0:
+                self._last_thump_log_ts = now
+                self._append_history_row(
+                    created_at=datetime.now().isoformat(timespec="seconds"),
+                    tag="🛑 Noise Filtered",
+                    hype_pct="--",
+                    game=getattr(self.engine, "game_title", "") or "Local Session",
+                    stream_pos="--",
+                    status="Desk Bump / Click Rejected",
+                    color_hex="#71717a",
+                )
         else:
             self.lbl_dsp_thump.setText("Desk Thump Filter: Clear")
-            self.lbl_dsp_thump.setStyleSheet("")
+            self.lbl_dsp_thump.setStyleSheet("font-size: 11px; color: #a1a1aa;")
+
         last_rx = tel.get("last_reaction", "")
         if last_rx:
-            self.lbl_dsp_reaction.setText(f"Last Reaction: {last_rx}")
+            self.lbl_dsp_classified.setText(f"🎙️ Classified: {last_rx}")
+        elif vocal_vad:
+            self.lbl_dsp_classified.setText("🎙️ Classified: Normal Speech")
+        else:
+            self.lbl_dsp_classified.setText("🎙️ Classified: Idle / Ambient")
 
     def _on_cooldown_tick(self, rem: int):
         if rem > 0:
@@ -885,7 +1110,40 @@ class AutoClipTab(QWidget):
         label = payload.get("reaction_label", "Peak")
         self.lbl_cooldown.setText(f"{icon} {label}! Cooldown: {self.engine.cooldown_duration_sec}s")
         self.lbl_cooldown.setStyleSheet("font-size: 11px; font-weight: bold; color: #ef4444;")
+        self._append_history_row(
+            created_at=payload.get("created_at", ""),
+            tag=f"{icon} {label}",
+            hype_pct=f"{int(round(float(payload.get('level', 0.0)) * 100))}%",
+            game=getattr(self.engine, "game_title", "") or "Local Session",
+            stream_pos=payload.get("timestamp_str", "00:00"),
+            status="Primary Trigger (Marker + Replay)",
+            color_hex="#f59e0b",
+        )
         self.clip_vault.scan_clips()
+
+    def _on_secondary_logged(self, payload: dict):
+        icon = payload.get("reaction_icon", "⏱️")
+        label = payload.get("reaction_label", "Secondary Peak")
+        self._append_history_row(
+            created_at=payload.get("created_at", ""),
+            tag=f"{icon} {label}",
+            hype_pct=f"{int(round(float(payload.get('level', 0.0)) * 100))}%",
+            game=getattr(self.engine, "game_title", "") or "Local Session",
+            stream_pos=payload.get("timestamp_str", "00:00"),
+            status="Cooldown Secondary",
+            color_hex="#38bdf8",
+        )
+
+    def _on_possible_logged(self, payload: dict):
+        self._append_history_row(
+            created_at="",
+            tag="⚡ Possible Moment",
+            hype_pct=f"{int(round(float(payload.get('level', 0.0)) * 100))}%",
+            game=getattr(self.engine, "game_title", "") or "Local Session",
+            stream_pos=payload.get("timestamp_str", "00:00"),
+            status="Orange Possible Moment",
+            color_hex="#f97316",
+        )
 
     def set_streamer_mode(self, enabled: bool):
         is_active = bool(enabled)

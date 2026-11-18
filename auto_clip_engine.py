@@ -874,6 +874,14 @@ class AutoClipEngine(QObject):
     def get_reaction_history(self) -> list:
         return list(self._reaction_history)
 
+    def clear_reaction_history(self):
+        self._reaction_history = []
+        try:
+            with open(self.history_file_path, "w", encoding="utf-8") as f:
+                json.dump([], f)
+        except Exception as e:
+            log_debug("AUTOCLIP_ERR", f"Failed to clear reaction_history.json: {e}")
+
     # ------------------ Configuration Import / Export ------------------
 
     def export_settings(self) -> dict:
