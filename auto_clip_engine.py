@@ -6,6 +6,7 @@ import struct
 import json
 from collections import deque
 from datetime import datetime
+import numpy as np
 
 from PyQt6.QtCore import QObject, pyqtSignal, QTimer, QIODevice
 from PyQt6.QtMultimedia import QMediaDevices, QAudioSource, QAudioFormat, QAudioDevice
@@ -42,6 +43,7 @@ class AutoClipEngine(QObject):
 
     # Signals for UI & System Integration
     level_updated = pyqtSignal(float, int, float, float)  # (current_level, zone 1-4, baseline, threshold)
+    dsp_telemetry_updated = pyqtSignal(dict)              # Live prosody DSP telemetry (F0, laughter, VAD, thump)
     marker_triggered = pyqtSignal(dict)                   # Primary peak event payload
     secondary_peak_logged = pyqtSignal(dict)              # Secondary peak during cooldown
     possible_peak_logged = pyqtSignal(dict)               # Orange possible peak event
@@ -53,11 +55,37 @@ class AutoClipEngine(QObject):
     ZONE_ORANGE = 3
     ZONE_RED = 4
 
+    VOICE_PROFILES = {
+        "dynamic": {"label": "Dynamic Auto-Adapt", "f0_base": 165.0, "adapt": True},
+        "deep": {"label": "Deep Voice (85-150 Hz)", "f0_base": 115.0, "adapt": False},
+        "mid": {"label": "Mid / Conversational (140-210 Hz)", "f0_base": 170.0, "adapt": False},
+        "high": {"label": "High / Expressive (190-320 Hz)", "f0_base": 235.0, "adapt": False},
+    }
+
+    GENRE_PRESETS = {
+        "default": {"label": "Default Balanced", "trigger_offset": 0.30, "min_duration_ms": 250, "desk_thump_sensitivity": 0.55},
+        "horror": {"label": "😱 Horror (Fast Jump-Scare)", "trigger_offset": 0.24, "min_duration_ms": 140, "desk_thump_sensitivity": 0.45},
+        "comedy": {"label": "😂 Comedy (Laugh Cadence)", "trigger_offset": 0.26, "min_duration_ms": 280, "desk_thump_sensitivity": 0.65},
+        "fps": {"label": "📢 FPS Shout (Anti-Thump)", "trigger_offset": 0.34, "min_duration_ms": 220, "desk_thump_sensitivity": 0.80},
+    }
+
+    REACTION_ZONES = [
+        ("🔥", "Pure Hype Explosion", "Pure_Hype_Explosion"),
+        ("😂", "Hysterical Laughter Fit", "Hysterical_Laughter_Fit"),
+        ("😱", "High-Pitched Scream / Shriek", "High_Pitched_Scream"),
+        ("📢", "Victory Shout / Callout", "Victory_Shout_Callout"),
+        ("😆", "Hyped Laughing Burst", "Hyped_Laughing_Burst"),
+        ("🗣️", "Intense Rapid Banter", "Intense_Rapid_Banter"),
+        ("😮", "Loud Gasp / Shock", "Loud_Gasp_Shock"),
+        ("💬", "Elevated Excitement", "Elevated_Excitement"),
+    ]
+
     def __init__(self, parent=None, app_dir=None):
         super().__init__(parent)
         self.app_dir = app_dir or os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "StreamerCalyx")
         os.makedirs(self.app_dir, exist_ok=True)
         self.log_file_path = os.path.join(self.app_dir, "cooldown_clips.txt")
+        self.history_file_path = os.path.join(self.app_dir, "reaction_history.json")
 
         # Engine Settings
         self.enabled = False
@@ -74,6 +102,14 @@ class AutoClipEngine(QObject):
         self.cooldown_duration_sec = 60
         self.active_scenes = ["In-Game", "Banter"]
         self.marker_description = "Auto-Clip/Markers"
+        self.marker_template = "{icon} {tag} [{game}]"
+        self.game_title = ""
+        self.save_replay_buffer = True
+        self.replay_dir = ""
+        self.auto_rename_replays = False
+        self.voice_profile = "dynamic"
+        self.genre_preset = "default"
+        self.desk_thump_sensitivity = 0.55 # 0.0 (off) to 1.0 (strict)
         self.streamer_mode = False
 
         # Audio Capture State
@@ -89,6 +125,30 @@ class AutoClipEngine(QObject):
         self.level_buffer = deque(maxlen=self._buffer_capacity)
         for _ in range(self._buffer_capacity):
             self.level_buffer.append(0.08)  # Seed initial quiet baseline
+
+        # Prosody Envelope & Pitch Buffers (2.0s @ 20Hz = 40 frames)
+        self._envelope_buffer = deque(maxlen=40)
+        self._pitch_baseline = 165.0
+        self._pitch_count = 0
+        self._last_dsp = {
+            "f0_hz": 0.0,
+            "f0_ratio": 1.0,
+            "pitch_baseline": 165.0,
+            "laughter_cadence": 0.0,
+            "banter_cadence": 0.0,
+            "vocal_vad": False,
+            "vocal_ratio": 0.0,
+            "subbass_ratio": 0.0,
+            "thump_rejected": False,
+            "crest_factor": 1.0,
+            "last_reaction": "",
+        }
+        self._peak_max_level = 0.0
+        self._peak_max_f0 = 0.0
+        self._peak_max_laughter = 0.0
+        self._peak_max_banter = 0.0
+        self._peak_max_crest = 1.0
+        self._reaction_history = self._load_reaction_history()
 
         self.current_level = 0.0
         self.current_baseline = 0.08
@@ -278,9 +338,10 @@ class AutoClipEngine(QObject):
     # ------------------ Audio Sampling & Peak Analysis ------------------
 
     def _process_audio_samples(self, override_level: float = None):
-        """Reads pending PCM audio data, computes normalized peak/RMS, and tests thresholds."""
+        """Reads pending PCM audio data, runs vectorized prosody DSP, and tests thresholds."""
         if override_level is not None:
             level_val = override_level
+            dsp = dict(self._last_dsp)
         else:
             if not self.audio_io:
                 return
@@ -299,8 +360,11 @@ class AutoClipEngine(QObject):
                 self.level_updated.emit(0.0, self.ZONE_GREEN, self.current_baseline, self.current_threshold)
                 return
 
-            # Calculate normalized perceptual level (RMS + peak blend, 0.0 to 1.0)
-            level_val = self._calculate_level(raw_bytes)
+            # Vectorized Acoustic Prosody DSP (level + <70Hz thump rejection + VAD + F0 + 4-6Hz cadence)
+            dsp = self._analyze_audio_frame(raw_bytes)
+            level_val = dsp["level"]
+            self._last_dsp.update(dsp)
+            self.dsp_telemetry_updated.emit(dict(self._last_dsp))
 
         self.current_level = level_val
 
@@ -311,9 +375,7 @@ class AutoClipEngine(QObject):
             self.current_baseline = sum(self.level_buffer) / len(self.level_buffer)
 
         # Update Session Voice Anchor (Cumulative Speech EMA)
-        # Adapts only when audio sits cleanly in the conversational speech band (0.22 to 0.55)
-        # Prevents screaming, coughing, desk bumps, and silence from altering the voice anchor
-        if 0.22 <= level_val <= 0.55:
+        if 0.22 <= level_val <= 0.55 and dsp.get("vocal_vad", True):
             alpha = 0.05 if self.session_voice_count < 100 else 0.005
             self.session_voice_anchor = (1.0 - alpha) * self.session_voice_anchor + alpha * level_val
             self.session_voice_anchor = max(0.25, min(0.52, self.session_voice_anchor))
@@ -321,8 +383,6 @@ class AutoClipEngine(QObject):
 
         # Calculate dynamic or manual thresholds with Dual-Baseline floor
         if self.auto_sensitivity:
-            # Dual-Baseline: Effective baseline is the higher of immediate room noise vs established speech anchor
-            # Guarantees that quiet/stealth gaming stretches do not drop the threshold down to silence
             effective_baseline = max(self.current_baseline, self.session_voice_anchor)
             offset = self.trigger_offset
             red_thresh = min(0.98, max(0.48, effective_baseline + offset))
@@ -360,79 +420,226 @@ class AutoClipEngine(QObject):
             if not self._peak_latched:
                 if self._spike_start_time is None:
                     self._spike_start_time = time.time()
+                    self._peak_max_level = level_val
+                    self._peak_max_f0 = dsp.get("f0_hz", 0.0)
+                    self._peak_max_laughter = dsp.get("laughter_cadence", 0.0)
+                    self._peak_max_banter = dsp.get("banter_cadence", 0.0)
+                    self._peak_max_crest = dsp.get("crest_factor", 1.0)
+                else:
+                    self._peak_max_level = max(self._peak_max_level, level_val)
+                    self._peak_max_f0 = max(self._peak_max_f0, dsp.get("f0_hz", 0.0))
+                    self._peak_max_laughter = max(self._peak_max_laughter, dsp.get("laughter_cadence", 0.0))
+                    self._peak_max_banter = max(self._peak_max_banter, dsp.get("banter_cadence", 0.0))
+                    self._peak_max_crest = max(self._peak_max_crest, dsp.get("crest_factor", 1.0))
+
                 elapsed_ms = (time.time() - self._spike_start_time) * 1000.0
                 if elapsed_ms >= self.min_duration_ms:
-                    # Genuine hype spike confirmed!
                     self._trigger_peak_event()
-                    self._peak_latched = True  # Latch: will not re-trigger until audio drops!
+                    self._peak_latched = True
                     self._spike_start_time = None
         else:
             self._spike_start_time = None
-            # Hysteresis: unlatch once audio drops back down into Green or Yellow
             if zone in (self.ZONE_GREEN, self.ZONE_YELLOW):
                 self._peak_latched = False
 
-    def _calculate_level(self, raw_bytes: bytes) -> float:
-        """Parses PCM data (Float32, Int32, or Int16) and extracts normalized perceptual level."""
+    def _decode_pcm_mono(self, raw_bytes: bytes) -> np.ndarray:
+        """Decodes Float32, Int32, or Int16 PCM bytes into a mono float32 numpy array (-1.0 to 1.0)."""
+        fmt = getattr(self, "_sample_format", None)
+        if fmt == QAudioFormat.SampleFormat.Float:
+            n = (len(raw_bytes) // 4) * 4
+            if n < 4:
+                return np.empty(0, dtype=np.float32)
+            arr = np.frombuffer(raw_bytes[:n], dtype=np.float32)
+        elif fmt == QAudioFormat.SampleFormat.Int32:
+            n = (len(raw_bytes) // 4) * 4
+            if n < 4:
+                return np.empty(0, dtype=np.float32)
+            arr = np.frombuffer(raw_bytes[:n], dtype=np.int32).astype(np.float32) / 2147483647.0
+        else:
+            n = (len(raw_bytes) // 2) * 2
+            if n < 2:
+                return np.empty(0, dtype=np.float32)
+            arr = np.frombuffer(raw_bytes[:n], dtype=np.int16).astype(np.float32) / 32767.0
+
+        ch = max(1, int(getattr(self, "_channels", 1) or 1))
+        if ch > 1 and arr.size >= ch:
+            usable = (arr.size // ch) * ch
+            arr = arr[:usable].reshape(-1, ch).mean(axis=1)
+        return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
+
+    def _analyze_audio_frame(self, raw_bytes: bytes) -> dict:
+        """
+        Vectorized 20 Hz Acoustic Prosody DSP pipeline:
+        1. Sub-bass desk thump / mic drop rejection (<70 Hz)
+        2. Human vocal tract Voice Activity Detection (80 Hz - 3500 Hz)
+        3. Stevens' power-law perceptual loudness expansion (RMS^0.5 + Peak^0.5)
+        4. Autocorrelation pitch tracking (F0 80-550 Hz) + >1.35x baseline inflection
+        5. Human laughter envelope cadence tracking (4-6 Hz) & rapid banter (6-10 Hz)
+        """
+        result = {
+            "level": 0.0,
+            "f0_hz": 0.0,
+            "f0_ratio": 1.0,
+            "pitch_baseline": self._pitch_baseline,
+            "laughter_cadence": 0.0,
+            "banter_cadence": 0.0,
+            "vocal_vad": False,
+            "vocal_ratio": 0.0,
+            "subbass_ratio": 0.0,
+            "thump_rejected": False,
+            "crest_factor": 1.0,
+        }
         try:
-            byte_len = len(raw_bytes)
-            if byte_len < 2:
-                return 0.0
+            mono = self._decode_pcm_mono(raw_bytes)
+            if mono.size < 32:
+                return result
 
-            gain = getattr(self, "input_gain", 1.0) * 2.5  # 100% on slider = 2.5x boost baseline
+            sr = max(8000, int(getattr(self, "_sample_rate", 48000) or 48000))
+            gain = getattr(self, "input_gain", 1.0) * 2.5
 
-            # 1. 32-bit Floating Point PCM (Standard for WASAPI / Windows 11 & VoiceMeeter)
-            if getattr(self, "_sample_format", None) == QAudioFormat.SampleFormat.Float:
-                num_floats = byte_len // 4
-                if num_floats <= 0:
-                    return 0.0
-                step = max(1, num_floats // 256)
-                floats = struct.unpack(f"<{num_floats}f", raw_bytes[:num_floats * 4])
-                sampled = floats[::step]
-                if not sampled:
-                    return 0.0
-                peak = min(1.0, max(abs(f) for f in sampled) * gain)
-                sum_sq = sum((f * gain) ** 2 for f in sampled)
-                rms = min(1.0, math.sqrt(sum_sq / len(sampled)))
+            # Remove DC offset
+            mono = mono - np.mean(mono)
+            scaled = mono * gain
 
-            # 2. 32-bit Signed Integer PCM
-            elif getattr(self, "_sample_format", None) == QAudioFormat.SampleFormat.Int32:
-                num_ints = byte_len // 4
-                if num_ints <= 0:
-                    return 0.0
-                step = max(1, num_ints // 256)
-                ints = struct.unpack(f"<{num_ints}i", raw_bytes[:num_ints * 4])
-                sampled = ints[::step]
-                if not sampled:
-                    return 0.0
-                peak = min(1.0, (max(abs(i) for i in sampled) / 2147483647.0) * gain)
-                sum_sq = sum(((i / 2147483647.0) * gain) ** 2 for i in sampled)
-                rms = min(1.0, math.sqrt(sum_sq / len(sampled)))
+            # Spectral analysis via rFFT for sub-bass thump rejection (<70Hz) & Vocal VAD (80-3500Hz)
+            win = np.hanning(scaled.size).astype(np.float32)
+            spec = np.abs(np.fft.rfft(scaled * win))
+            freqs = np.fft.rfftfreq(scaled.size, d=1.0 / sr)
+            power = spec * spec
+            total_power = float(np.sum(power)) + 1e-12
 
-            # 3. 16-bit Signed Integer PCM (Standard Fallback)
-            else:
-                num_shorts = byte_len // 2
-                if num_shorts <= 0:
-                    return 0.0
-                step = max(1, num_shorts // 256)
-                shorts = struct.unpack(f"<{num_shorts}h", raw_bytes[:num_shorts * 2])
-                sampled = shorts[::step]
-                if not sampled:
-                    return 0.0
-                peak = min(1.0, (max(abs(s) for s in sampled) / 32767.0) * gain)
-                sum_sq = sum(((s / 32767.0) * gain) ** 2 for s in sampled)
-                rms = min(1.0, math.sqrt(sum_sq / len(sampled)))
+            sub_mask = freqs < 70.0
+            vocal_mask = (freqs >= 80.0) & (freqs <= 3500.0)
+            sub_power = float(np.sum(power[sub_mask]))
+            vocal_power = float(np.sum(power[vocal_mask]))
 
-            # Perceptual loudness expansion (Stevens' power law / square-root curve):
-            # Normalizes human perceived volume so speech sits cleanly in Yellow (~35%-45%)
+            subbass_ratio = sub_power / total_power
+            vocal_ratio = vocal_power / total_power
+            result["subbass_ratio"] = subbass_ratio
+            result["vocal_ratio"] = vocal_ratio
+
+            # Band-filtered signal in vocal tract (zero out <70 Hz in FFT domain)
+            fft_full = np.fft.rfft(scaled)
+            fft_hp = fft_full.copy()
+            fft_hp[freqs < 70.0] = 0.0
+            hp_sig = np.fft.irfft(fft_hp, n=scaled.size)
+
+            # Raw RMS & Peak on <70Hz-filtered vocal signal
+            rms_raw = float(np.sqrt(np.mean(hp_sig * hp_sig)))
+            peak_raw = float(np.max(np.abs(hp_sig))) if hp_sig.size else 0.0
+            crest = (peak_raw / max(rms_raw, 1e-5)) if rms_raw > 0.002 else 1.0
+            result["crest_factor"] = min(12.0, crest)
+
+            # Desk thump / mic drop rejection: if sub-bass (<70Hz) dominates vocal band
+            thump_sens = float(getattr(self, "desk_thump_sensitivity", 0.55))
+            thump_cutoff = 0.72 - (thump_sens * 0.35)  # 0.72 (lenient) down to 0.37 (strict)
+            is_thump = (subbass_ratio > thump_cutoff) and (vocal_ratio < 0.35) and (thump_sens > 0.05)
+            result["thump_rejected"] = is_thump
+
+            rms = min(1.0, rms_raw)
+            peak = min(1.0, peak_raw)
+            if is_thump:
+                rms *= 0.25
+                peak *= 0.25
+
+            # Stevens' power-law perceptual loudness expansion (RMS^0.5 + Peak^0.5)
             p_rms = math.sqrt(rms) if rms > 0.0 else 0.0
             p_peak = math.sqrt(peak) if peak > 0.0 else 0.0
+            level = min(1.0, max(0.0, (0.65 * p_rms) + (0.35 * p_peak)))
+            result["level"] = level
 
-            level = (0.65 * p_rms) + (0.35 * p_peak)
-            return min(1.0, max(0.0, level))
+            # Voice Activity Detection in 80-3500 Hz
+            vocal_vad = (vocal_ratio >= 0.38) and (level >= 0.14) and (not is_thump)
+            result["vocal_vad"] = vocal_vad
+
+            # Update 20 Hz envelope buffer & compute 4-6 Hz laughter + 6-10 Hz banter cadence
+            self._envelope_buffer.append(level)
+            if len(self._envelope_buffer) >= 16:
+                env = np.array(self._envelope_buffer, dtype=np.float32)
+                env = env - np.mean(env)
+                env_spec = np.abs(np.fft.rfft(env)) ** 2
+                env_freqs = np.fft.rfftfreq(env.size, d=0.05)  # 20 Hz frame rate
+                env_total = float(np.sum(env_spec[1:])) + 1e-9
+                laugh_mask = (env_freqs >= 4.0) & (env_freqs <= 6.0)
+                banter_mask = (env_freqs > 6.0) & (env_freqs <= 10.0)
+                result["laughter_cadence"] = min(1.0, float(np.sum(env_spec[laugh_mask])) / env_total * 2.2)
+                result["banter_cadence"] = min(1.0, float(np.sum(env_spec[banter_mask])) / env_total * 2.2)
+
+            # Autocorrelation Pitch Tracking (F0: 80 - 550 Hz) when vocal activity present
+            if vocal_vad and hp_sig.size >= (sr // 40):
+                # Limit to 1024-2048 samples for fast vectorized autocorrelation
+                seg = hp_sig[-min(hp_sig.size, 2048):]
+                seg_energy = float(np.dot(seg, seg))
+                if seg_energy > 1e-6:
+                    # FFT-based autocorrelation: O(N log N)
+                    n_fft = 1 << int(math.ceil(math.log2(seg.size * 2)))
+                    f_seg = np.fft.rfft(seg, n=n_fft)
+                    acf = np.fft.irfft(f_seg * np.conj(f_seg), n=n_fft)[:seg.size]
+                    acf = acf / (acf[0] + 1e-12)
+                    lag_min = max(1, sr // 550)
+                    lag_max = min(seg.size - 1, sr // 80)
+                    if lag_max > lag_min + 2:
+                        sub_acf = acf[lag_min:lag_max]
+                        best_idx = int(np.argmax(sub_acf))
+                        peak_corr = float(sub_acf[best_idx])
+                        if peak_corr >= 0.32:
+                            f0_hz = float(sr) / float(lag_min + best_idx)
+                            result["f0_hz"] = f0_hz
+                            # Adapt pitch baseline only in dynamic profile during normal speech
+                            prof = self.VOICE_PROFILES.get(getattr(self, "voice_profile", "dynamic"), self.VOICE_PROFILES["dynamic"])
+                            if prof["adapt"] and 0.20 <= level <= 0.62 and 80.0 <= f0_hz <= 320.0:
+                                alpha = 0.08 if self._pitch_count < 60 else 0.015
+                                self._pitch_baseline = (1.0 - alpha) * self._pitch_baseline + alpha * f0_hz
+                                self._pitch_count += 1
+                            elif not prof["adapt"]:
+                                self._pitch_baseline = prof["f0_base"]
+                            result["pitch_baseline"] = self._pitch_baseline
+                            result["f0_ratio"] = f0_hz / max(60.0, self._pitch_baseline)
+
+            return result
         except Exception:
-            pass
-        return 0.0
+            return result
+
+    def _calculate_level(self, raw_bytes: bytes) -> float:
+        """Backward-compatible wrapper returning normalized perceptual level (0.0 to 1.0)."""
+        return self._analyze_audio_frame(raw_bytes)["level"]
+
+    def classify_vocal_reaction(self, level: float, f0_hz: float, f0_ratio: float,
+                                laughter_cadence: float, banter_cadence: float, crest_factor: float) -> tuple:
+        """
+        8-Zone Human Vocal Reaction Classifier.
+        Returns (icon, label, slug).
+        """
+        if level >= 0.90 and f0_ratio >= 1.25 and laughter_cadence < 0.40:
+            return self.REACTION_ZONES[0]  # 🔥 Pure Hype Explosion
+        if laughter_cadence >= 0.42:
+            return self.REACTION_ZONES[1]  # 😂 Hysterical Laughter Fit
+        if f0_hz >= 340.0 or f0_ratio >= 1.60:
+            return self.REACTION_ZONES[2]  # 😱 High-Pitched Scream / Shriek
+        if crest_factor >= 5.2 and f0_ratio >= 1.35 and level < 0.85:
+            return self.REACTION_ZONES[6]  # 😮 Loud Gasp / Shock
+        if laughter_cadence >= 0.26:
+            return self.REACTION_ZONES[4]  # 😆 Hyped Laughing Burst
+        if banter_cadence >= 0.34 and level < 0.86:
+            return self.REACTION_ZONES[5]  # 🗣️ Intense Rapid Banter
+        if level >= 0.72:
+            return self.REACTION_ZONES[3]  # 📢 Victory Shout / Callout
+        return self.REACTION_ZONES[7]      # 💬 Elevated Excitement
+
+    def format_marker_text(self, payload: dict) -> str:
+        """Formats Twitch marker description using customizable template ({icon} {tag} [{game}])."""
+        tpl = (getattr(self, "marker_template", "") or "").strip()
+        if not tpl:
+            return getattr(self, "marker_description", "Auto-Clip/Markers")
+        icon = payload.get("reaction_icon", "💬")
+        tag = payload.get("reaction_label", getattr(self, "marker_description", "Auto-Clip"))
+        game = (getattr(self, "game_title", "") or "").strip()
+        text = tpl.replace("{icon}", icon).replace("{tag}", tag)
+        if game:
+            text = text.replace("{game}", game)
+        else:
+            text = text.replace("[{game}]", "").replace("({game})", "").replace("{game}", "")
+        return " ".join(text.split())[:140]
 
     # ------------------ Peak Event & Cooldown Dispatch ------------------
 
@@ -443,33 +650,51 @@ class AutoClipEngine(QObject):
         clip_end_sec = stream_pos_sec + 20
         clip_range_str = f"Start: {self._format_seconds(clip_start_sec)} | End: {self._format_seconds(clip_end_sec)}"
 
+        peak_lvl = max(self.current_level, getattr(self, "_peak_max_level", 0.0))
+        peak_f0 = max(self._last_dsp.get("f0_hz", 0.0), getattr(self, "_peak_max_f0", 0.0))
+        f0_ratio = (peak_f0 / max(60.0, self._pitch_baseline)) if peak_f0 > 0 else self._last_dsp.get("f0_ratio", 1.0)
+        laugh_cad = max(self._last_dsp.get("laughter_cadence", 0.0), getattr(self, "_peak_max_laughter", 0.0))
+        banter_cad = max(self._last_dsp.get("banter_cadence", 0.0), getattr(self, "_peak_max_banter", 0.0))
+        crest = max(self._last_dsp.get("crest_factor", 1.0), getattr(self, "_peak_max_crest", 1.0))
+
+        icon, label, slug = self.classify_vocal_reaction(peak_lvl, peak_f0, f0_ratio, laugh_cad, banter_cad, crest)
+        self._last_dsp["last_reaction"] = f"{icon} {label}"
+
         payload = {
             "position_seconds": stream_pos_sec,
             "timestamp_str": timestamp_str,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
             "clip_range_str": clip_range_str,
             "clip_start_sec": clip_start_sec,
             "clip_end_sec": clip_end_sec,
-            "level": self.current_level,
+            "level": peak_lvl,
             "baseline": self.current_baseline,
             "threshold": self.current_threshold,
-            "description": self.marker_description
+            "description": self.marker_description,
+            "reaction_icon": icon,
+            "reaction_label": label,
+            "reaction_slug": slug,
+            "f0_hz": round(peak_f0, 1),
+            "f0_ratio": round(f0_ratio, 2),
+            "laughter_cadence": round(laugh_cad, 2),
         }
+        payload["formatted_marker"] = self.format_marker_text(payload)
 
         now = time.time()
         if not self.is_in_cooldown:
-            # PRIMARY ACTION: Drop live Twitch marker, start 60s cooldown
-            log_debug("AUTOCLIP", f"🔥 PRIMARY PEAK EVENT at {timestamp_str} (level={self.current_level:.2f}) -> {clip_range_str}")
+            log_debug("AUTOCLIP", f"{icon} PRIMARY PEAK ({label}) at {timestamp_str} (lvl={peak_lvl:.2f}, F0={peak_f0:.0f}Hz) -> {clip_range_str}")
+            self._append_reaction_history(payload, kind="primary")
             self.marker_triggered.emit(payload)
             self._start_cooldown()
             self._last_secondary_log_time = now
         else:
-            # SECONDARY ACTION (In Cooldown): Debounce at least 15s between secondary logged clips
             if now - getattr(self, "_last_secondary_log_time", 0.0) >= 15.0:
                 self._last_secondary_log_time = now
-                log_debug("AUTOCLIP", f"⏱️ SECONDARY PEAK EVENT during cooldown at {timestamp_str} -> {clip_range_str}")
+                log_debug("AUTOCLIP", f"⏱️ SECONDARY PEAK ({icon} {label}) during cooldown at {timestamp_str} -> {clip_range_str}")
                 self._log_clip_to_file(
-                    f"[Secondary Peak at {timestamp_str}] Suggested Manual Clip -> {clip_range_str} (Cooldown active: {self.cooldown_remaining}s left)"
+                    f"[Secondary Peak at {timestamp_str}] {icon} {label} -> {clip_range_str} (Cooldown active: {self.cooldown_remaining}s left)"
                 )
+                self._append_reaction_history(payload, kind="secondary")
                 self.secondary_peak_logged.emit(payload)
 
     def _handle_orange_possible_peak(self):
@@ -582,10 +807,72 @@ class AutoClipEngine(QObject):
             log_debug("AUTOCLIP", f"Error clearing log file: {e}")
 
     def reset_session_voice(self):
-        """Resets the learned long-term session voice anchor back to default 35%."""
+        """Resets the learned long-term session voice anchor and pitch baseline."""
         self.session_voice_anchor = 0.35
         self.session_voice_count = 0
-        log_debug("AUTOCLIP", "Session Voice Anchor reset to default (35%).")
+        prof = self.VOICE_PROFILES.get(getattr(self, "voice_profile", "dynamic"), self.VOICE_PROFILES["dynamic"])
+        self._pitch_baseline = prof["f0_base"]
+        self._pitch_count = 0
+        log_debug("AUTOCLIP", "Session Voice Anchor and F0 pitch baseline reset.")
+
+    def apply_voice_profile(self, profile_key: str):
+        """Applies a Voice Profile preset (dynamic, deep, mid, high)."""
+        if profile_key not in self.VOICE_PROFILES:
+            profile_key = "dynamic"
+        self.voice_profile = profile_key
+        self._pitch_baseline = self.VOICE_PROFILES[profile_key]["f0_base"]
+        self._pitch_count = 0
+        log_debug("AUTOCLIP", f"Applied voice profile '{profile_key}' (F0={self._pitch_baseline} Hz)")
+
+    def apply_genre_preset(self, preset_key: str):
+        """Applies a 1-click Game Genre Preset (default, horror, comedy, fps)."""
+        if preset_key not in self.GENRE_PRESETS:
+            preset_key = "default"
+        p = self.GENRE_PRESETS[preset_key]
+        self.genre_preset = preset_key
+        self.trigger_offset = p["trigger_offset"]
+        self.min_duration_ms = p["min_duration_ms"]
+        self.desk_thump_sensitivity = p["desk_thump_sensitivity"]
+        log_debug("AUTOCLIP", f"Applied genre preset '{preset_key}': offset={self.trigger_offset}, dur={self.min_duration_ms}ms, thump={self.desk_thump_sensitivity}")
+
+    # ------------------ Reaction History Persistence ------------------
+
+    def _load_reaction_history(self) -> list:
+        try:
+            if os.path.exists(self.history_file_path):
+                with open(self.history_file_path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        return data
+        except Exception as e:
+            log_debug("AUTOCLIP", f"Could not load reaction_history.json: {e}")
+        return []
+
+    def _append_reaction_history(self, payload: dict, kind: str = "primary"):
+        entry = {
+            "created_at": payload.get("created_at", datetime.now().isoformat(timespec="seconds")),
+            "position_seconds": int(payload.get("position_seconds", 0)),
+            "timestamp_str": payload.get("timestamp_str", "00:00"),
+            "clip_start_sec": int(payload.get("clip_start_sec", 0)),
+            "clip_end_sec": int(payload.get("clip_end_sec", 0)),
+            "reaction_icon": payload.get("reaction_icon", "💬"),
+            "reaction_label": payload.get("reaction_label", "Elevated Excitement"),
+            "reaction_slug": payload.get("reaction_slug", "Elevated_Excitement"),
+            "formatted_marker": payload.get("formatted_marker", ""),
+            "f0_hz": payload.get("f0_hz", 0.0),
+            "level": round(float(payload.get("level", 0.0)), 3),
+            "kind": kind,
+        }
+        self._reaction_history.append(entry)
+        self._reaction_history = self._reaction_history[-500:]
+        try:
+            with open(self.history_file_path, "w", encoding="utf-8") as f:
+                json.dump(self._reaction_history, f, indent=2)
+        except Exception as e:
+            log_debug("AUTOCLIP_ERR", f"Failed to save reaction_history.json: {e}")
+
+    def get_reaction_history(self) -> list:
+        return list(self._reaction_history)
 
     # ------------------ Configuration Import / Export ------------------
 
@@ -605,6 +892,14 @@ class AutoClipEngine(QObject):
             "active_scenes": list(self.active_scenes),
             "cooldown_duration_sec": self.cooldown_duration_sec,
             "marker_description": self.marker_description,
+            "marker_template": self.marker_template,
+            "game_title": self.game_title,
+            "save_replay_buffer": self.save_replay_buffer,
+            "replay_dir": self.replay_dir,
+            "auto_rename_replays": self.auto_rename_replays,
+            "voice_profile": self.voice_profile,
+            "genre_preset": self.genre_preset,
+            "desk_thump_sensitivity": self.desk_thump_sensitivity,
             "session_voice_anchor": self.session_voice_anchor
         }
 
@@ -626,3 +921,11 @@ class AutoClipEngine(QObject):
         self.active_scenes = list(d.get("active_scenes", ["In-Game", "Banter"]))
         self.cooldown_duration_sec = d.get("cooldown_duration_sec", 60)
         self.marker_description = d.get("marker_description", "Auto-Clip/Markers")
+        self.marker_template = d.get("marker_template", "{icon} {tag} [{game}]")
+        self.game_title = d.get("game_title", "")
+        self.save_replay_buffer = d.get("save_replay_buffer", True)
+        self.replay_dir = d.get("replay_dir", "")
+        self.auto_rename_replays = d.get("auto_rename_replays", False)
+        self.desk_thump_sensitivity = d.get("desk_thump_sensitivity", 0.55)
+        self.genre_preset = d.get("genre_preset", "default")
+        self.apply_voice_profile(d.get("voice_profile", "dynamic"))

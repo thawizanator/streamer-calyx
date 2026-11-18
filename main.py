@@ -1182,7 +1182,9 @@ class RedBorderOverlay(QMainWindow):
         play_chime = getattr(eng, "play_chime", True) if eng else True
         flash_overlay = getattr(eng, "flash_overlay", True) if eng else True
         alert_color = getattr(eng, "alert_color", "#f59e0b") if eng else "#f59e0b"
-        desc = getattr(eng, "marker_description", "Auto-Clip/Markers") if eng else "Auto-Clip/Markers"
+        icon = payload.get("reaction_icon", "🎙️")
+        label = payload.get("reaction_label", "Peak Reaction")
+        desc = payload.get("formatted_marker") or (eng.format_marker_text(payload) if eng and hasattr(eng, "format_marker_text") else getattr(eng, "marker_description", "Auto-Clip/Markers"))
 
         # 1. Play audio chime in headphones via Soundboard Engine
         if play_chime and hasattr(self, "soundboard_engine") and self.soundboard_engine:
@@ -1200,14 +1202,20 @@ class RedBorderOverlay(QMainWindow):
             log_debug("AUTOCLIP", f"Dropping Twitch Stream Marker: '{desc}' on channel '{self.twitch_channel}'")
             self.dispatch_twitch_call("/marker", desc)
 
+        # 3a. Trigger Streamlabs / OBS Replay Buffer Save
+        if eng and getattr(eng, "save_replay_buffer", True):
+            slobs = getattr(eng, "slobs_client", None)
+            if slobs and slobs.is_connected() and hasattr(slobs, "save_replay_buffer"):
+                slobs.save_replay_buffer()
+
         # 3b. Log Offline Production Moment (if Content Creator Mode enabled)
         if getattr(self, "content_creator_mode", False) and hasattr(self, "moments_logger") and self.moments_logger:
-            self.moments_logger.log_moment(description=f"Auto-Clip Peak ({desc})", source="Auto-Clip")
+            self.moments_logger.log_moment(description=f"{icon} {label} ({desc})", source="Auto-Clip")
 
         # 4. Display In-Game HUD Toast notification
         ts_str = payload.get("timestamp_str", "")
         clip_range = payload.get("clip_range_str", "")
-        toast_msg = f"🎙️ Auto-Clip Marker Dropped! [{ts_str}]\n{clip_range}"
+        toast_msg = f"{icon} {label}! [{ts_str}]\n{clip_range}"
         self.show_hud_toast(toast_msg, True)
 
     def _handle_auto_clip_secondary(self, payload: dict):
@@ -1215,7 +1223,9 @@ class RedBorderOverlay(QMainWindow):
         log_debug("AUTOCLIP", f"Handling cooldown secondary peak logged: {payload}")
         ts_str = payload.get("timestamp_str", "")
         clip_range = payload.get("clip_range_str", "")
-        toast_msg = f"📝 Cooldown Clip Logged: [{ts_str}]\n{clip_range}"
+        icon = payload.get("reaction_icon", "📝")
+        label = payload.get("reaction_label", "Cooldown Clip")
+        toast_msg = f"{icon} Cooldown {label}: [{ts_str}]\n{clip_range}"
         self.show_hud_toast(toast_msg, True)
 
     def _handle_auto_clip_possible(self, payload: dict):

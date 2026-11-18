@@ -202,7 +202,7 @@ Streamer Calyx V4 expands from a Twitch-centric live overlay and remote director
 
 ---
 
-### Phase 10: Native Acoustic Auto-Clip & Stream Marker System Overhaul
+### Phase 10: Native Acoustic Auto-Clip & Stream Marker System Overhaul — *Completed*
 *Transition the validated DSP prosody engine from the standalone prototype into Calyx's core backend.*
 
 - **10.1 Vectorized Acoustic Prosody DSP Pipeline (`auto_clip_engine.py`)**:

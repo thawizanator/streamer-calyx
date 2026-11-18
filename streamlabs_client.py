@@ -689,6 +689,22 @@ class StreamlabsClient(QObject):
                 log_debug("SLOBS", f"Error toggling recording: {e}")
         return False
 
+    def save_replay_buffer(self) -> bool:
+        """Triggers Streamlabs Desktop replay buffer save (StreamingService.saveReplay)."""
+        if self._mode == "webrtc_client" and hasattr(self, "_webrtc_sender") and self._webrtc_sender:
+            self._webrtc_sender({"action": "SAVE_REPLAY_BUFFER"})
+            return True
+        if self.is_connected():
+            try:
+                if getattr(self, "_mode", "local") == "remote":
+                    return self._call_rpc_ws_async("saveReplay", "StreamingService")
+                self._call_rpc("saveReplay", "StreamingService")
+                log_debug("SLOBS", "Dispatched saveReplay to StreamingService.")
+                return True
+            except Exception as e:
+                log_debug("SLOBS", f"Error saving replay buffer: {e}")
+        return False
+
     def _check_watchdog(self):
         """Watchdog checks if connection is alive; if not, attempts reconnect."""
         if self._mode == "webrtc_client":
