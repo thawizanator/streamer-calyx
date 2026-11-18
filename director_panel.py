@@ -1800,8 +1800,13 @@ class DirectorPanelWindow(QWidget):
             self.lbl_video_feed.setText("LAN Video Feed Offline\n(Enable in Director Settings)")
 
     def _on_lan_video_frame(self, pix):
-        if hasattr(self, "lbl_video_feed") and self.lbl_video_feed.isVisible():
-            self.lbl_video_feed.setPixmap(pix.scaled(self.lbl_video_feed.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        if hasattr(self, "lbl_video_feed") and hasattr(self, "video_feed_window") and self.video_feed_window.isVisible():
+            tw, th = getattr(self, "_lan_video_size", (360, 202))
+            scaled = pix.scaled(tw, th, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            self.lbl_video_feed.setPixmap(scaled)
+            if self.lbl_video_feed.width() != scaled.width() or self.lbl_video_feed.height() != scaled.height():
+                self.lbl_video_feed.setFixedSize(scaled.width(), scaled.height())
+                self.video_feed_window.setFixedSize(max(220, scaled.width() + 14), scaled.height() + 36)
 
     def _on_record_clicked(self):
         if not self.is_recording_permitted():
