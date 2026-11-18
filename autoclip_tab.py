@@ -693,13 +693,40 @@ class AutoClipTab(QWidget):
         lay_th.addWidget(self.lbl_thump)
         lay.addWidget(grp_thump)
 
-        # 1-Click Game Genre Presets (2x2 Grid so it never clips horizontally)
-        grp_presets = QGroupBox("1-Click Game Genre Presets")
-        grid_pr = QGridLayout(grp_presets)
+        # 1-Click Game Genre Presets & Metric Weights (Custom Hype Formula)
+        grp_presets = QGroupBox("Metric Weights (Custom Hype Formula) & Game Presets")
+        lay_gp = QVBoxLayout(grp_presets)
+        grid_pr = QGridLayout()
         for idx, (key, info) in enumerate(AutoClipEngine.GENRE_PRESETS.items()):
             btn = QPushButton(info["label"])
             btn.clicked.connect(lambda _chk=False, k=key: self._on_genre_preset_clicked(k))
             grid_pr.addWidget(btn, idx // 2, idx % 2)
+        lay_gp.addLayout(grid_pr)
+
+        grid_w = QGridLayout()
+        self.slider_w_vol = QSlider(Qt.Orientation.Horizontal)
+        self.slider_w_vad = QSlider(Qt.Orientation.Horizontal)
+        self.slider_w_pitch = QSlider(Qt.Orientation.Horizontal)
+        self.slider_w_laugh = QSlider(Qt.Orientation.Horizontal)
+        self.lbl_w_vol = QLabel("40%")
+        self.lbl_w_vad = QLabel("25%")
+        self.lbl_w_pitch = QLabel("20%")
+        self.lbl_w_laugh = QLabel("15%")
+
+        weight_rows = [
+            ("Volume:", self.slider_w_vol, self.lbl_w_vol, "weight_volume"),
+            ("Voice (VAD):", self.slider_w_vad, self.lbl_w_vad, "weight_vad"),
+            ("Pitch (F0):", self.slider_w_pitch, self.lbl_w_pitch, "weight_pitch"),
+            ("Laughter:", self.slider_w_laugh, self.lbl_w_laugh, "weight_laughter"),
+        ]
+        for r_idx, (title, sld, lbl, attr) in enumerate(weight_rows):
+            sld.setRange(0, 100)
+            lbl.setFixedWidth(40)
+            sld.valueChanged.connect(lambda v, a=attr, l=lbl: self._on_weight_changed(a, l, v))
+            grid_w.addWidget(QLabel(title), r_idx, 0)
+            grid_w.addWidget(sld, r_idx, 1)
+            grid_w.addWidget(lbl, r_idx, 2)
+        lay_gp.addLayout(grid_w)
         lay.addWidget(grp_presets)
 
         # 8-Zone Classifier Legend
@@ -925,6 +952,18 @@ class AutoClipTab(QWidget):
         self.slider_thump.blockSignals(False)
         self.lbl_thump.setText(f"{int(getattr(self.engine, 'desk_thump_sensitivity', 0.55) * 100)}%")
 
+        for attr, sld, lbl in [
+            ("weight_volume", self.slider_w_vol, self.lbl_w_vol),
+            ("weight_vad", self.slider_w_vad, self.lbl_w_vad),
+            ("weight_pitch", self.slider_w_pitch, self.lbl_w_pitch),
+            ("weight_laughter", self.slider_w_laugh, self.lbl_w_laugh),
+        ]:
+            pct = int(round(getattr(self.engine, attr, 0.25) * 100))
+            sld.blockSignals(True)
+            sld.setValue(pct)
+            sld.blockSignals(False)
+            lbl.setText(f"{pct}%")
+
         self.txt_replay_dir.setText(getattr(self.engine, "replay_dir", ""))
         self.chk_auto_rename.setChecked(getattr(self.engine, "auto_rename_replays", False))
         if getattr(self.engine, "replay_dir", ""):
@@ -1131,6 +1170,11 @@ class AutoClipTab(QWidget):
         self.lbl_thump.setText(f"{val}%")
         self.settings_changed.emit()
 
+    def _on_weight_changed(self, attr: str, lbl: QLabel, val: int):
+        setattr(self.engine, attr, val / 100.0)
+        lbl.setText(f"{val}%")
+        self.settings_changed.emit()
+
     def _on_genre_preset_clicked(self, key: str):
         self.engine.apply_genre_preset(key)
         self._load_from_engine()
@@ -1300,14 +1344,16 @@ class AutoClipTab(QWidget):
 
     def _on_possible_logged(self, payload: dict):
         lvl = float(payload.get("level", 0.0))
-        if self.engine.should_log_event("orange", "Possible Moment", lvl):
+        icon = payload.get("reaction_icon", "⚡")
+        label = payload.get("reaction_label", "Possible Moment")
+        if self.engine.should_log_event("orange", label, lvl):
             self._append_history_row(
-                created_at="",
-                tag="⚡ Possible Moment",
+                created_at=payload.get("created_at", ""),
+                tag=f"{icon} {label}",
                 hype_pct=f"{int(round(lvl * 100))}%",
                 game=getattr(self.engine, "game_title", "") or "Local Session",
                 stream_pos=payload.get("timestamp_str", "00:00"),
-                status="Orange Possible Moment",
+                status=f"Elevated Reaction ({int(round(lvl * 100))}%)",
                 color_hex="#f97316",
             )
 

@@ -63,10 +63,14 @@ class AutoClipEngine(QObject):
     }
 
     GENRE_PRESETS = {
-        "default": {"label": "Default Balanced", "trigger_offset": 0.30, "min_duration_ms": 250, "desk_thump_sensitivity": 0.55},
-        "horror": {"label": "😱 Horror (Fast Jump-Scare)", "trigger_offset": 0.24, "min_duration_ms": 140, "desk_thump_sensitivity": 0.45},
-        "comedy": {"label": "😂 Comedy (Laugh Cadence)", "trigger_offset": 0.26, "min_duration_ms": 280, "desk_thump_sensitivity": 0.65},
-        "fps": {"label": "📢 FPS Shout (Anti-Thump)", "trigger_offset": 0.34, "min_duration_ms": 220, "desk_thump_sensitivity": 0.80},
+        "default": {"label": "Default Balanced", "trigger_offset": 0.30, "min_duration_ms": 250, "desk_thump_sensitivity": 0.55,
+                    "w_vol": 0.40, "w_vad": 0.25, "w_pitch": 0.20, "w_laugh": 0.15},
+        "horror": {"label": "😱 Horror (Fast Jump-Scare)", "trigger_offset": 0.24, "min_duration_ms": 140, "desk_thump_sensitivity": 0.45,
+                   "w_vol": 0.35, "w_vad": 0.15, "w_pitch": 0.40, "w_laugh": 0.10},
+        "comedy": {"label": "😂 Comedy (Laugh Cadence)", "trigger_offset": 0.26, "min_duration_ms": 280, "desk_thump_sensitivity": 0.65,
+                   "w_vol": 0.25, "w_vad": 0.20, "w_pitch": 0.15, "w_laugh": 0.40},
+        "fps": {"label": "📢 FPS Shout (Anti-Thump)", "trigger_offset": 0.34, "min_duration_ms": 220, "desk_thump_sensitivity": 0.80,
+                "w_vol": 0.50, "w_vad": 0.30, "w_pitch": 0.15, "w_laugh": 0.05},
     }
 
     REACTION_ZONES = [
@@ -93,8 +97,12 @@ class AutoClipEngine(QObject):
         self.auto_sensitivity = True
         self.input_gain = 1.0              # 0.25 to 2.0 (Input Gain Trim)
         self.trigger_offset = 0.30         # 0.15 to 0.60 (Offset above baseline)
-        self.manual_threshold = 0.70       # 0.20 to 1.0
+        self.manual_threshold = 0.75       # 0.40 to 1.0 (matches Tester 75% default)
         self.min_duration_ms = 250         # 100 to 800ms
+        self.weight_volume = 0.40
+        self.weight_vad = 0.25
+        self.weight_pitch = 0.20
+        self.weight_laughter = 0.15
         self.log_orange_moments = True
         self.flash_overlay = True
         self.alert_color = "#f59e0b"       # Gold default
@@ -610,12 +618,18 @@ class AutoClipEngine(QObject):
 
             if vocal_vad and not is_thump:
                 inflect_boost = min(1.0, max(0.0, (result["f0_ratio"] - 1.0) * 1.5))
+                w_vol = float(getattr(self, "weight_volume", 0.40))
+                w_vad = float(getattr(self, "weight_vad", 0.25))
+                w_pit = float(getattr(self, "weight_pitch", 0.20))
+                w_lgh = float(getattr(self, "weight_laughter", 0.15))
+                w_sum = max(0.01, w_vol + w_vad + w_pit + w_lgh)
+                vad_c = float(result.get("vad_confidence", 0.0))
                 result["composite_hype"] = min(1.0, (
-                    0.60 * level
-                    + 0.15 * inflect_boost
-                    + 0.15 * result["laughter_cadence"]
-                    + 0.10 * min(1.0, vocal_ratio)
-                ))
+                    w_vol * level
+                    + w_vad * vad_c
+                    + w_pit * inflect_boost
+                    + w_lgh * result["laughter_cadence"]
+                ) / w_sum)
             else:
                 result["composite_hype"] = 0.0
 
@@ -723,22 +737,36 @@ class AutoClipEngine(QObject):
                 self.secondary_peak_logged.emit(payload)
 
     def _handle_orange_possible_peak(self):
-        """Logs an orange possible moment to text file if enabled."""
+        """Logs an orange possible moment with vocal reaction classification."""
         stream_pos_sec, timestamp_str = self._get_current_stream_timestamp()
         clip_start_sec = max(0, stream_pos_sec - 40)
         clip_end_sec = stream_pos_sec + 20
         clip_range_str = f"Start: {self._format_seconds(clip_start_sec)} | End: {self._format_seconds(clip_end_sec)}"
 
+        dsp = getattr(self, "_last_dsp", {}) or {}
+        icon, label, slug = self.classify_vocal_reaction(
+            self.current_level,
+            dsp.get("f0_hz", 0.0),
+            dsp.get("f0_ratio", 1.0),
+            dsp.get("laughter_cadence", 0.0),
+            dsp.get("banter_cadence", 0.0),
+            dsp.get("crest_factor", 1.0),
+        )
         payload = {
             "position_seconds": stream_pos_sec,
             "timestamp_str": timestamp_str,
+            "created_at": datetime.now().isoformat(timespec="seconds"),
             "clip_range_str": clip_range_str,
-            "level": self.current_level
+            "level": max(self.current_level, dsp.get("composite_hype", 0.0)),
+            "reaction_icon": icon,
+            "reaction_label": label,
+            "reaction_slug": slug,
         }
-        log_debug("AUTOCLIP", f"⚡ ORANGE POSSIBLE MOMENT at {timestamp_str} -> {clip_range_str}")
-        self._log_clip_to_file(
-            f"[Possible Peak at {timestamp_str}] Suggested Manual Clip -> {clip_range_str} (Orange Moment)"
-        )
+        log_debug("AUTOCLIP", f"{icon} ORANGE MOMENT ({label}) at {timestamp_str} -> {clip_range_str}")
+        if self.should_log_event("orange", label, payload["level"]):
+            self._log_clip_to_file(
+                f"[Possible Peak at {timestamp_str}] {icon} {label} -> {clip_range_str} (Orange Moment)"
+            )
         self.possible_peak_logged.emit(payload)
 
     def _start_cooldown(self):
@@ -858,6 +886,10 @@ class AutoClipEngine(QObject):
         self.trigger_offset = p["trigger_offset"]
         self.min_duration_ms = p["min_duration_ms"]
         self.desk_thump_sensitivity = p["desk_thump_sensitivity"]
+        self.weight_volume = p.get("w_vol", 0.40)
+        self.weight_vad = p.get("w_vad", 0.25)
+        self.weight_pitch = p.get("w_pitch", 0.20)
+        self.weight_laughter = p.get("w_laugh", 0.15)
         log_debug("AUTOCLIP", f"Applied genre preset '{preset_key}': offset={self.trigger_offset}, dur={self.min_duration_ms}ms, thump={self.desk_thump_sensitivity}")
 
     # ------------------ Reaction History Persistence ------------------
@@ -960,6 +992,10 @@ class AutoClipEngine(QObject):
             "voice_profile": self.voice_profile,
             "genre_preset": self.genre_preset,
             "desk_thump_sensitivity": self.desk_thump_sensitivity,
+            "weight_volume": self.weight_volume,
+            "weight_vad": self.weight_vad,
+            "weight_pitch": self.weight_pitch,
+            "weight_laughter": self.weight_laughter,
             "event_log_filter": dict(self.event_log_filter),
             "session_voice_anchor": self.session_voice_anchor
         }
@@ -988,6 +1024,10 @@ class AutoClipEngine(QObject):
         self.replay_dir = d.get("replay_dir", "")
         self.auto_rename_replays = d.get("auto_rename_replays", False)
         self.desk_thump_sensitivity = d.get("desk_thump_sensitivity", 0.55)
+        self.weight_volume = d.get("weight_volume", 0.40)
+        self.weight_vad = d.get("weight_vad", 0.25)
+        self.weight_pitch = d.get("weight_pitch", 0.20)
+        self.weight_laughter = d.get("weight_laughter", 0.15)
         if isinstance(d.get("event_log_filter"), dict):
             self.event_log_filter = dict(d["event_log_filter"])
         self.genre_preset = d.get("genre_preset", "default")
