@@ -1167,7 +1167,7 @@ class DirectorTab(QWidget):
         for sz_val, sz_lbl in [("240x135", "Small (240x135)"), ("360x202", "Medium (360x202)"), ("480x270", "Large (480x270)"), ("640x360", "XL (640x360)")]:
             self.combo_lan_size.addItem(sz_lbl, sz_val)
         self.combo_lan_size.setCurrentIndex(1)  # Medium default
-        self.combo_lan_size.currentIndexChanged.connect(self._on_lan_video_settings_changed)
+        self.combo_lan_size.currentIndexChanged.connect(self._on_lan_video_size_changed)
         row_fps.addWidget(self.combo_lan_size, 1)
         lay_vid.addLayout(row_fps)
 
@@ -3551,19 +3551,22 @@ class DirectorTab(QWidget):
             except Exception as e:
                 log_debug("DIRECTOR", f"Could not close stream preview browser window: {e}")
 
-    def _on_lan_video_settings_changed(self):
-        enabled = self.chk_lan_video.isChecked() if hasattr(self, "chk_lan_video") else False
-        fps = int(self.combo_lan_fps.currentData() or 5) if hasattr(self, "combo_lan_fps") else 5
-        src_mode = (self.combo_lan_source.currentData() or "auto") if hasattr(self, "combo_lan_source") else "auto"
+    def _on_lan_video_size_changed(self):
         sz_str = (self.combo_lan_size.currentData() or "360x202") if hasattr(self, "combo_lan_size") else "360x202"
-        mon_idx = self.combo_monitor.currentData() if hasattr(self, "combo_monitor") else 0
-
         if self.panel_window and hasattr(self.panel_window, "set_lan_video_size"):
             try:
                 pw, ph = [int(x) for x in sz_str.split("x")]
                 self.panel_window.set_lan_video_size(pw, ph)
             except Exception:
                 pass
+        if not getattr(self, "_is_loading", False):
+            self.save_to_settings()
+
+    def _on_lan_video_settings_changed(self):
+        enabled = self.chk_lan_video.isChecked() if hasattr(self, "chk_lan_video") else False
+        fps = int(self.combo_lan_fps.currentData() or 5) if hasattr(self, "combo_lan_fps") else 5
+        src_mode = (self.combo_lan_source.currentData() or "auto") if hasattr(self, "combo_lan_source") else "auto"
+        mon_idx = self.combo_monitor.currentData() if hasattr(self, "combo_monitor") else 0
 
         if enabled:
             if self.lan_video_server is None:

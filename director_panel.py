@@ -1787,7 +1787,7 @@ class DirectorPanelWindow(QWidget):
         self._lan_video_size = (int(width), int(height))
         if hasattr(self, "lbl_video_feed") and hasattr(self, "video_feed_window"):
             self.lbl_video_feed.setFixedSize(int(width), int(height))
-            self.video_feed_window.adjustSize()
+            self.video_feed_window.setFixedSize(int(width) + 14, int(height) + 36)
             if self.video_feed_window.isVisible():
                 self._position_video_feed_window()
 
