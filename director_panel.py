@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (
     QSlider, QFrame, QGridLayout, QApplication, QStyleOption, QStyle,
     QMenu, QSizeGrip
 )
-from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QIcon
+from PyQt6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QIcon, QPixmap
 
 from streamlabs_client import get_streamlabs_client
 from soundboard_spam_guard import SoundboardSpamGuard
