@@ -8,7 +8,8 @@ from PyQt6.QtWidgets import (
     QCheckBox, QSlider, QPushButton, QGroupBox, QFrame,
     QColorDialog, QScrollArea, QMessageBox, QGridLayout, QSizePolicy,
     QTabWidget, QLineEdit, QListWidget, QListWidgetItem, QFileDialog,
-    QTableWidget, QTableWidgetItem, QHeaderView
+    QTableWidget, QTableWidgetItem, QHeaderView,
+    QDialog, QRadioButton, QButtonGroup, QDialogButtonBox
 )
 from PyQt6.QtGui import QPainter, QColor, QPen
 
@@ -25,6 +26,126 @@ except ImportError:
 
 from auto_clip_engine import AutoClipEngine
 from clip_vault import ClipVaultManager, ClipPreviewWidget
+
+
+class EventLogFilterDialog(QDialog):
+    """
+    Mutually-exclusive Event Log Filter dialog.
+    Users can log All Events OR pick from exactly ONE category at a time:
+      - Vocal Reactions (8 reaction types)
+      - Hype Ranges (50-69%, 70-84%, 85-100%)
+      - Event Statuses (Primary Trigger, Cooldown Secondary, Orange Possible, Desk Bump Rejected)
+    Selecting one category automatically disables the other categories.
+    """
+
+    HYPE_OPTIONS = [
+        ("50-69", "50% – 69% (Elevated)"),
+        ("70-84", "70% – 84% (High Hype)"),
+        ("85-100", "85% – 100% (Extreme Peak)"),
+    ]
+    STATUS_OPTIONS = [
+        ("primary", "Primary Trigger (Marker + Replay)"),
+        ("secondary", "Cooldown Secondary"),
+        ("orange", "Orange Possible Moment"),
+        ("thump", "Desk Bump / Click Rejected"),
+    ]
+
+    def __init__(self, current_filter: dict, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Event Log Filter (Single-Category Selection)")
+        self.setMinimumWidth(440)
+        self._filter = dict(current_filter or {})
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(10)
+
+        lbl_info = QLabel(
+            "Choose which events to record in Trigger History. "
+            "Only <b>one filter category</b> can be active at a time."
+        )
+        lbl_info.setWordWrap(True)
+        lay.addWidget(lbl_info)
+
+        self.mode_group = QButtonGroup(self)
+        self.rb_all = QRadioButton("🌐 Log All Events (No Filter)")
+        self.rb_reactions = QRadioButton("🎙️ Filter by Vocal Reactions only")
+        self.rb_hype = QRadioButton("🔥 Filter by Hype Ranges only")
+        self.rb_status = QRadioButton("📋 Filter by Event Statuses only")
+        for rb in (self.rb_all, self.rb_reactions, self.rb_hype, self.rb_status):
+            self.mode_group.addButton(rb)
+        lay.addWidget(self.rb_all)
+
+        # Category 1: Vocal Reactions
+        lay.addWidget(self.rb_reactions)
+        self.grp_reactions = QGroupBox("Vocal Reactions")
+        grid_rx = QGridLayout(self.grp_reactions)
+        self.reaction_checks = {}
+        saved_rx = set(self._filter.get("reactions", []))
+        for idx, (icon, label, _slug) in enumerate(AutoClipEngine.REACTION_ZONES):
+            chk = QCheckBox(f"{icon} {label}")
+            chk.setChecked(label in saved_rx)
+            self.reaction_checks[label] = chk
+            grid_rx.addWidget(chk, idx // 2, idx % 2)
+        lay.addWidget(self.grp_reactions)
+
+        # Category 2: Hype Ranges
+        lay.addWidget(self.rb_hype)
+        self.grp_hype = QGroupBox("Hype Ranges")
+        lay_hype = QHBoxLayout(self.grp_hype)
+        self.hype_checks = {}
+        saved_hype = set(self._filter.get("hype_ranges", []))
+        for key, label in self.HYPE_OPTIONS:
+            chk = QCheckBox(label)
+            chk.setChecked(key in saved_hype)
+            self.hype_checks[key] = chk
+            lay_hype.addWidget(chk)
+        lay.addWidget(self.grp_hype)
+
+        # Category 3: Event Statuses
+        lay.addWidget(self.rb_status)
+        self.grp_status = QGroupBox("Event Statuses")
+        grid_st = QGridLayout(self.grp_status)
+        self.status_checks = {}
+        saved_st = set(self._filter.get("statuses", []))
+        for idx, (key, label) in enumerate(self.STATUS_OPTIONS):
+            chk = QCheckBox(label)
+            chk.setChecked(key in saved_st)
+            self.status_checks[key] = chk
+            grid_st.addWidget(chk, idx // 2, idx % 2)
+        lay.addWidget(self.grp_status)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        lay.addWidget(buttons)
+
+        for rb in (self.rb_all, self.rb_reactions, self.rb_hype, self.rb_status):
+            rb.toggled.connect(self._sync_category_locks)
+
+        mode = self._filter.get("mode", "all")
+        {"all": self.rb_all, "reactions": self.rb_reactions, "hype": self.rb_hype, "status": self.rb_status}.get(mode, self.rb_all).setChecked(True)
+        self._sync_category_locks()
+
+    def _sync_category_locks(self):
+        self.grp_reactions.setEnabled(self.rb_reactions.isChecked())
+        self.grp_hype.setEnabled(self.rb_hype.isChecked())
+        self.grp_status.setEnabled(self.rb_status.isChecked())
+
+    def get_filter(self) -> dict:
+        if self.rb_reactions.isChecked():
+            mode = "reactions"
+        elif self.rb_hype.isChecked():
+            mode = "hype"
+        elif self.rb_status.isChecked():
+            mode = "status"
+        else:
+            mode = "all"
+        return {
+            "mode": mode,
+            "reactions": [k for k, chk in self.reaction_checks.items() if chk.isChecked()],
+            "hype_ranges": [k for k, chk in self.hype_checks.items() if chk.isChecked()],
+            "statuses": [k for k, chk in self.status_checks.items() if chk.isChecked()],
+        }
 
 
 class SegmentedBarWidget(QWidget):
@@ -623,6 +744,16 @@ class AutoClipTab(QWidget):
         lay_h.addWidget(self.tbl_history)
 
         row_btns = QHBoxLayout()
+        btn_filter = QPushButton("⚙️ Event Log Filter...")
+        btn_filter.clicked.connect(self._open_event_filter_dialog)
+        row_btns.addWidget(btn_filter)
+
+        self.lbl_filter_summary = QLabel("Filter: All Events")
+        self.lbl_filter_summary.setStyleSheet("color: #38bdf8; font-size: 11px; font-weight: bold;")
+        row_btns.addWidget(self.lbl_filter_summary)
+
+        row_btns.addStretch()
+
         btn_clear = QPushButton("🗑️ Clear Events")
         btn_clear.clicked.connect(self._on_clear_history_events)
         row_btns.addWidget(btn_clear)
@@ -630,7 +761,6 @@ class AutoClipTab(QWidget):
         btn_export_json = QPushButton("💾 Export Session Log (.json)")
         btn_export_json.clicked.connect(self._on_export_history_json)
         row_btns.addWidget(btn_export_json)
-        row_btns.addStretch()
         lay_h.addLayout(row_btns)
 
         lay.addWidget(grp_hist)
@@ -800,6 +930,7 @@ class AutoClipTab(QWidget):
         if getattr(self.engine, "replay_dir", ""):
             self.clip_vault.set_replay_dir(self.engine.replay_dir, self.engine.auto_rename_replays)
 
+        self._update_filter_summary()
         self._on_auto_sens_toggled(self.engine.auto_sensitivity)
         self._on_master_enable_toggled(self.engine.enabled)
 
@@ -847,6 +978,30 @@ class AutoClipTab(QWidget):
     def _on_clear_history_events(self):
         self.engine.clear_reaction_history()
         self.tbl_history.setRowCount(0)
+
+    def _open_event_filter_dialog(self):
+        dlg = EventLogFilterDialog(getattr(self.engine, "event_log_filter", {}), self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self.engine.event_log_filter = dlg.get_filter()
+            self._update_filter_summary()
+            self.settings_changed.emit()
+
+    def _update_filter_summary(self):
+        if not hasattr(self, "lbl_filter_summary"):
+            return
+        flt = getattr(self.engine, "event_log_filter", {}) or {}
+        mode = flt.get("mode", "all")
+        if mode == "reactions":
+            cnt = len(flt.get("reactions", []))
+            self.lbl_filter_summary.setText(f"Filter: Vocal Reactions ({cnt})")
+        elif mode == "hype":
+            cnt = len(flt.get("hype_ranges", []))
+            self.lbl_filter_summary.setText(f"Filter: Hype Ranges ({cnt})")
+        elif mode == "status":
+            cnt = len(flt.get("statuses", []))
+            self.lbl_filter_summary.setText(f"Filter: Statuses ({cnt})")
+        else:
+            self.lbl_filter_summary.setText("Filter: All Events")
 
     def _on_export_history_json(self):
         history = self.engine.get_reaction_history()
@@ -1069,15 +1224,16 @@ class AutoClipTab(QWidget):
             now = time.time()
             if now - self._last_thump_log_ts >= 3.0:
                 self._last_thump_log_ts = now
-                self._append_history_row(
-                    created_at=datetime.now().isoformat(timespec="seconds"),
-                    tag="🛑 Noise Filtered",
-                    hype_pct="--",
-                    game=getattr(self.engine, "game_title", "") or "Local Session",
-                    stream_pos="--",
-                    status="Desk Bump / Click Rejected",
-                    color_hex="#71717a",
-                )
+                if self.engine.should_log_event("thump", "Noise Filtered", 0.0):
+                    self._append_history_row(
+                        created_at=datetime.now().isoformat(timespec="seconds"),
+                        tag="🛑 Noise Filtered",
+                        hype_pct="--",
+                        game=getattr(self.engine, "game_title", "") or "Local Session",
+                        stream_pos="--",
+                        status="Desk Bump / Click Rejected",
+                        color_hex="#71717a",
+                    )
         else:
             self.lbl_dsp_thump.setText("Desk Thump Filter: Clear")
             self.lbl_dsp_thump.setStyleSheet("font-size: 11px; color: #a1a1aa;")
@@ -1112,42 +1268,48 @@ class AutoClipTab(QWidget):
     def _on_marker_triggered(self, payload: dict):
         icon = payload.get("reaction_icon", "🔥")
         label = payload.get("reaction_label", "Peak")
+        lvl = float(payload.get("level", 0.0))
         self.lbl_cooldown.setText(f"{icon} {label}! Cooldown: {self.engine.cooldown_duration_sec}s")
         self.lbl_cooldown.setStyleSheet("font-size: 11px; font-weight: bold; color: #ef4444;")
-        self._append_history_row(
-            created_at=payload.get("created_at", ""),
-            tag=f"{icon} {label}",
-            hype_pct=f"{int(round(float(payload.get('level', 0.0)) * 100))}%",
-            game=getattr(self.engine, "game_title", "") or "Local Session",
-            stream_pos=payload.get("timestamp_str", "00:00"),
-            status="Primary Trigger (Marker + Replay)",
-            color_hex="#f59e0b",
-        )
+        if self.engine.should_log_event("primary", label, lvl):
+            self._append_history_row(
+                created_at=payload.get("created_at", ""),
+                tag=f"{icon} {label}",
+                hype_pct=f"{int(round(lvl * 100))}%",
+                game=getattr(self.engine, "game_title", "") or "Local Session",
+                stream_pos=payload.get("timestamp_str", "00:00"),
+                status="Primary Trigger (Marker + Replay)",
+                color_hex="#f59e0b",
+            )
         self.clip_vault.scan_clips()
 
     def _on_secondary_logged(self, payload: dict):
         icon = payload.get("reaction_icon", "⏱️")
         label = payload.get("reaction_label", "Secondary Peak")
-        self._append_history_row(
-            created_at=payload.get("created_at", ""),
-            tag=f"{icon} {label}",
-            hype_pct=f"{int(round(float(payload.get('level', 0.0)) * 100))}%",
-            game=getattr(self.engine, "game_title", "") or "Local Session",
-            stream_pos=payload.get("timestamp_str", "00:00"),
-            status="Cooldown Secondary",
-            color_hex="#38bdf8",
-        )
+        lvl = float(payload.get("level", 0.0))
+        if self.engine.should_log_event("secondary", label, lvl):
+            self._append_history_row(
+                created_at=payload.get("created_at", ""),
+                tag=f"{icon} {label}",
+                hype_pct=f"{int(round(lvl * 100))}%",
+                game=getattr(self.engine, "game_title", "") or "Local Session",
+                stream_pos=payload.get("timestamp_str", "00:00"),
+                status="Cooldown Secondary",
+                color_hex="#38bdf8",
+            )
 
     def _on_possible_logged(self, payload: dict):
-        self._append_history_row(
-            created_at="",
-            tag="⚡ Possible Moment",
-            hype_pct=f"{int(round(float(payload.get('level', 0.0)) * 100))}%",
-            game=getattr(self.engine, "game_title", "") or "Local Session",
-            stream_pos=payload.get("timestamp_str", "00:00"),
-            status="Orange Possible Moment",
-            color_hex="#f97316",
-        )
+        lvl = float(payload.get("level", 0.0))
+        if self.engine.should_log_event("orange", "Possible Moment", lvl):
+            self._append_history_row(
+                created_at="",
+                tag="⚡ Possible Moment",
+                hype_pct=f"{int(round(lvl * 100))}%",
+                game=getattr(self.engine, "game_title", "") or "Local Session",
+                stream_pos=payload.get("timestamp_str", "00:00"),
+                status="Orange Possible Moment",
+                color_hex="#f97316",
+            )
 
     def set_streamer_mode(self, enabled: bool):
         is_active = bool(enabled)

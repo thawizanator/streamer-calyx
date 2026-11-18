@@ -110,6 +110,12 @@ class AutoClipEngine(QObject):
         self.voice_profile = "dynamic"
         self.genre_preset = "default"
         self.desk_thump_sensitivity = 0.55 # 0.0 (off) to 1.0 (strict)
+        self.event_log_filter = {
+            "mode": "all",       # "all" | "reactions" | "hype" | "status"
+            "reactions": [],
+            "hype_ranges": [],
+            "statuses": [],
+        }
         self.streamer_mode = False
 
         # Audio Capture State
@@ -700,7 +706,8 @@ class AutoClipEngine(QObject):
         now = time.time()
         if not self.is_in_cooldown:
             log_debug("AUTOCLIP", f"{icon} PRIMARY PEAK ({label}) at {timestamp_str} (lvl={peak_lvl:.2f}, F0={peak_f0:.0f}Hz) -> {clip_range_str}")
-            self._append_reaction_history(payload, kind="primary")
+            if self.should_log_event("primary", label, peak_lvl):
+                self._append_reaction_history(payload, kind="primary")
             self.marker_triggered.emit(payload)
             self._start_cooldown()
             self._last_secondary_log_time = now
@@ -708,10 +715,11 @@ class AutoClipEngine(QObject):
             if now - getattr(self, "_last_secondary_log_time", 0.0) >= 15.0:
                 self._last_secondary_log_time = now
                 log_debug("AUTOCLIP", f"⏱️ SECONDARY PEAK ({icon} {label}) during cooldown at {timestamp_str} -> {clip_range_str}")
-                self._log_clip_to_file(
-                    f"[Secondary Peak at {timestamp_str}] {icon} {label} -> {clip_range_str} (Cooldown active: {self.cooldown_remaining}s left)"
-                )
-                self._append_reaction_history(payload, kind="secondary")
+                if self.should_log_event("secondary", label, peak_lvl):
+                    self._log_clip_to_file(
+                        f"[Secondary Peak at {timestamp_str}] {icon} {label} -> {clip_range_str} (Cooldown active: {self.cooldown_remaining}s left)"
+                    )
+                    self._append_reaction_history(payload, kind="secondary")
                 self.secondary_peak_logged.emit(payload)
 
     def _handle_orange_possible_peak(self):
@@ -899,6 +907,33 @@ class AutoClipEngine(QObject):
         except Exception as e:
             log_debug("AUTOCLIP_ERR", f"Failed to clear reaction_history.json: {e}")
 
+    def should_log_event(self, status_kind: str, reaction_label: str = "", level: float = 0.0) -> bool:
+        """Evaluates whether an event passes the mutually-exclusive Event Log Filter."""
+        flt = getattr(self, "event_log_filter", None) or {}
+        mode = flt.get("mode", "all")
+        if mode == "all":
+            return True
+        if mode == "reactions":
+            sel = flt.get("reactions", [])
+            return bool(sel) and (reaction_label in sel)
+        if mode == "hype":
+            sel = flt.get("hype_ranges", [])
+            if not sel:
+                return False
+            pct = int(round(float(level) * 100))
+            for r in sel:
+                if r == "50-69" and 50 <= pct <= 69:
+                    return True
+                if r == "70-84" and 70 <= pct <= 84:
+                    return True
+                if r == "85-100" and pct >= 85:
+                    return True
+            return False
+        if mode == "status":
+            sel = flt.get("statuses", [])
+            return bool(sel) and (status_kind in sel)
+        return True
+
     # ------------------ Configuration Import / Export ------------------
 
     def export_settings(self) -> dict:
@@ -925,6 +960,7 @@ class AutoClipEngine(QObject):
             "voice_profile": self.voice_profile,
             "genre_preset": self.genre_preset,
             "desk_thump_sensitivity": self.desk_thump_sensitivity,
+            "event_log_filter": dict(self.event_log_filter),
             "session_voice_anchor": self.session_voice_anchor
         }
 
@@ -952,5 +988,7 @@ class AutoClipEngine(QObject):
         self.replay_dir = d.get("replay_dir", "")
         self.auto_rename_replays = d.get("auto_rename_replays", False)
         self.desk_thump_sensitivity = d.get("desk_thump_sensitivity", 0.55)
+        if isinstance(d.get("event_log_filter"), dict):
+            self.event_log_filter = dict(d["event_log_filter"])
         self.genre_preset = d.get("genre_preset", "default")
         self.apply_voice_profile(d.get("voice_profile", "dynamic"))
