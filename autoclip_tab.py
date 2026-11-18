@@ -1064,10 +1064,15 @@ class AutoClipTab(QWidget):
         self.settings_changed.emit()
 
     def _open_audio_diagnostics(self):
-        if self.main_win and hasattr(self.main_win, "show_audio_diagnostics"):
-            self.main_win.show_audio_diagnostics()
-        elif self.main_win and hasattr(self.main_win, "overlay") and hasattr(self.main_win.overlay, "show_audio_diagnostics"):
-            self.main_win.overlay.show_audio_diagnostics()
+        try:
+            from audio_diagnostics import AudioDiagnosticsDialog
+            overlay_app = getattr(self.main_win, "overlay", None) if self.main_win else None
+            dlg = AudioDiagnosticsDialog(self, overlay_app=overlay_app, engine=self.engine)
+            dlg.exec()
+            self._load_from_engine()
+            self.settings_changed.emit()
+        except Exception as e:
+            QMessageBox.warning(self, "Audio Diagnostics Error", f"Could not open Audio Diagnostics:\n{e}")
 
     def _on_device_changed(self):
         name = self.combo_device.currentData()

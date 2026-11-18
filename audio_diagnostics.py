@@ -1,7 +1,8 @@
 """
-Streamer Calyx - Audio Input Diagnostics Suite
-Provides non-invasive 5-second acoustic analysis, telemetry collection,
-and diagnostic reporting for microphone and VoiceMeeter audio routing.
+Streamer Calyx - Audio Input Diagnostics & Live Calibration Suite
+Combines Tester-Harness live 20 Hz prosody gauges with a configurable
+X-minute sample test (Markers, Clips, Possibilities, Desk Bumps, Noise Ignores)
+and automated calibration recommendations.
 Does NOT record or save any audio files (privacy-safe).
 """
 
@@ -9,12 +10,12 @@ import os
 import sys
 import math
 import time
-import struct
 import datetime
 from PyQt6.QtCore import Qt, QTimer, QRectF
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QComboBox,
-    QPushButton, QProgressBar, QTextEdit, QMessageBox, QFrame
+    QPushButton, QProgressBar, QTextEdit, QMessageBox, QFrame,
+    QGroupBox, QGridLayout, QScrollArea, QWidget
 )
 from PyQt6.QtGui import QColor, QPainter, QPen, QGuiApplication
 from PyQt6.QtMultimedia import QMediaDevices, QAudioSource, QAudioDevice, QAudioFormat
@@ -26,15 +27,23 @@ import theme_manager
 APP_DIR = os.path.join(os.environ.get("APPDATA", ""), "StreamerCalyx")
 
 
-class MiniVUMeter(QFrame):
-    """Compact live VU meter for the diagnostic dialog."""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(18)
-        self.current_level = 0.0
+class DiagSegmentedBar(QWidget):
+    """Segmented LED gauge for Audio Diagnostics live prosody display."""
 
-    def set_level(self, val: float):
-        self.current_level = max(0.0, min(1.0, val))
+    def __init__(self, active_color: str = "#22c55e", show_threshold: bool = False, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(16)
+        self.setMinimumWidth(140)
+        self.active_color = QColor(active_color)
+        self.inactive_color = QColor("#222228")
+        self.show_threshold = show_threshold
+        self.value = 0.0
+        self.threshold = 0.75
+
+    def set_value(self, val: float, threshold: float = None):
+        self.value = max(0.0, min(1.0, float(val)))
+        if threshold is not None:
+            self.threshold = max(0.0, min(1.0, float(threshold)))
         self.update()
 
     def paintEvent(self, event):
@@ -42,62 +51,66 @@ class MiniVUMeter(QFrame):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         w = self.width()
         h = self.height()
-
-        # Background
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#18181b"))
-        painter.drawRoundedRect(0, 0, w, h, 3, 3)
-
-        # Segments
-        num_segments = 36
+        num_seg = 36
         gap = 2
-        seg_w = (w - (num_segments - 1) * gap) / num_segments
-        lit = int(self.current_level * num_segments)
-
-        for i in range(num_segments):
-            is_lit = i < lit
-            # Zone colors matching engine
-            if i >= 25:    # Red (~0.68)
-                c = QColor("#ef4444") if is_lit else QColor("#450a0a")
-            elif i >= 19:  # Orange (~0.52)
-                c = QColor("#f97316") if is_lit else QColor("#431407")
-            elif i >= 10:  # Yellow (~0.28)
-                c = QColor("#eab308") if is_lit else QColor("#422006")
-            else:          # Green (<0.28)
-                c = QColor("#22c55e") if is_lit else QColor("#052e16")
-
+        seg_w = max(2.0, (w - (num_seg - 1) * gap) / num_seg)
+        lit = int(round(self.value * num_seg))
+        painter.setPen(Qt.PenStyle.NoPen)
+        for i in range(num_seg):
             x = i * (seg_w + gap)
-            painter.setBrush(c)
-            painter.drawRoundedRect(QRectF(x, 2, seg_w, h - 4), 1.5, 1.5)
+            painter.setBrush(self.active_color if i < lit else self.inactive_color)
+            painter.drawRoundedRect(QRectF(x, 2, seg_w, h - 4), 2, 2)
+        if self.show_threshold:
+            tx = int(self.threshold * w)
+            painter.setPen(QPen(QColor("#ffffff"), 2))
+            painter.drawLine(tx, 0, tx, h)
+
+
+class MiniVUMeter(DiagSegmentedBar):
+    """Backward-compatible alias."""
+    def set_level(self, val: float):
+        self.set_value(val)
 
 
 class AudioDiagnosticsDialog(QDialog):
     """
-    Modal dialog allowing streamers to benchmark audio levels, verify zone placement,
-    and generate telemetry reports for bug reports or troubleshooting.
+    Live Prosody Calibration & X-Minute Sample Diagnostics Suite.
     """
+
+    DURATION_OPTIONS = [
+        ("15 Seconds (Quick Check)", 15),
+        ("30 Seconds", 30),
+        ("1 Minute", 60),
+        ("2 Minutes", 120),
+        ("3 Minutes", 180),
+        ("5 Minutes", 300),
+    ]
+
     def __init__(self, parent=None, overlay_app=None, engine=None):
         super().__init__(parent)
         self.overlay_app = overlay_app
         self.engine = engine
         self.setObjectName("AudioDiagnosticsDialog")
-        self.setWindowTitle("Audio Input Diagnostics & Calibration Suite")
-        self.resize(580, 640)
+        self.setWindowTitle("🎙️ Audio Input Diagnostics & Calibration Suite")
+        self.resize(740, 740)
 
-        # State
+        # Capture / Sampling State
         self.is_testing = False
         self.test_tick = 0
-        self.total_ticks = 100  # 100 * 50ms = 5000ms = 5 seconds
+        self.total_ticks = 600  # updated from duration combo (20 Hz)
         self.audio_source = None
         self.audio_io = None
-        self.samples_rms = []
-        self.samples_peak = []
-        self.samples_level = []
-        self.samples_dbfs = []
-        self.clip_count = 0
-        self.report_text = ""
+        self._using_engine_tap = False
+        self._sample_format = None
+        self._sample_rate = 48000
+        self._channels = 2
 
-        # Timers
+        # Sample Telemetry Accumulators
+        self._reset_sample_stats()
+        self.report_text = ""
+        self._recommended_settings = {}
+
+        # 20 Hz poll timer for standalone QAudioSource capture
         self.timer_sample = QTimer(self)
         self.timer_sample.setInterval(50)
         self.timer_sample.timeout.connect(self._on_sample_tick)
@@ -108,282 +121,411 @@ class AudioDiagnosticsDialog(QDialog):
         pref = getattr(self.overlay_app, "theme_preference", "system") if self.overlay_app else "system"
         theme_manager.apply_theme_to_window(self, pref)
 
+    def _reset_sample_stats(self):
+        self.samples_level = []
+        self.samples_speech_level = []
+        self.samples_ambient_level = []
+        self.samples_f0 = []
+        self.samples_hype = []
+        self.count_markers = 0
+        self.count_secondary = 0
+        self.count_possible = 0
+        self.count_thumps = 0
+        self.count_noise_ignored = 0
+        self._last_possible_ts = 0.0
+        self._last_thump_ts = 0.0
+        self._sim_spike_start = None
+        self._sim_cooldown_until = 0.0
+
     def _build_ui(self):
-        lay = QVBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        lay = QVBoxLayout(content)
         lay.setSpacing(10)
-        lay.setContentsMargins(14, 14, 14, 14)
+        lay.setContentsMargins(4, 4, 4, 4)
 
         # Header
-        hdr = QVBoxLayout()
-        hdr.setSpacing(2)
-        lbl_title = QLabel("🎙️ AUDIO INPUT DIAGNOSTICS & CALIBRATION")
+        lbl_title = QLabel("🎙️ AUDIO DIAGNOSTICS & LIVE PROSODY CALIBRATION")
         lbl_title.setStyleSheet("font-size: 14px; font-weight: bold; color: #38bdf8;")
-        hdr.addWidget(lbl_title)
+        lay.addWidget(lbl_title)
 
         lbl_desc = QLabel(
-            "Runs a non-invasive 5-second acoustic analysis on your input device (microphone or VoiceMeeter). "
-            "Telemetry is computed in real-time without recording or saving audio files."
+            "Run a live 20 Hz prosody sample test (15s–5m) to measure Markers, Cooldown Clips, "
+            "Possible Moments, Desk Bumps, and Noise Ignores, then review tailored setting suggestions."
         )
         lbl_desc.setWordWrap(True)
         lbl_desc.setStyleSheet("font-size: 11px; color: #a1a1aa;")
-        hdr.addWidget(lbl_desc)
-        lay.addLayout(hdr)
+        lay.addWidget(lbl_desc)
 
-        # Device Selection Row
+        # Device & Sample Duration Controls
+        grp_ctrl = QGroupBox("1. Sample Test Configuration")
+        lay_c = QVBoxLayout(grp_ctrl)
         row_dev = QHBoxLayout()
-        row_dev.addWidget(QLabel("Test Input Device:"))
+        row_dev.addWidget(QLabel("Input Device:"))
         self.combo_device = QComboBox()
+        self.combo_device.setMinimumWidth(0)
         self.combo_device.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.combo_device.setMinimumContentsLength(18)
         row_dev.addWidget(self.combo_device, 1)
-
         self.btn_refresh = QPushButton("🔄 Refresh")
-        self.btn_refresh.setFixedWidth(75)
         self.btn_refresh.clicked.connect(self._populate_devices)
         row_dev.addWidget(self.btn_refresh)
-        lay.addLayout(row_dev)
+        lay_c.addLayout(row_dev)
 
-        # 5-Second Test Control Box
-        box_test = QFrame()
-        box_test.setStyleSheet("QFrame { background-color: #1e1e24; border: 1px solid #3f3f46; border-radius: 6px; padding: 8px; }")
-        lay_test = QVBoxLayout(box_test)
-        lay_test.setSpacing(8)
+        row_dur = QHBoxLayout()
+        row_dur.addWidget(QLabel("Sample Duration:"))
+        self.combo_duration = QComboBox()
+        for label, secs in self.DURATION_OPTIONS:
+            self.combo_duration.addItem(label, secs)
+        self.combo_duration.setCurrentIndex(2)  # Default 1 Minute
+        row_dur.addWidget(self.combo_duration)
 
-        self.btn_start_test = QPushButton("▶️ Start 5-Second Diagnostic Test")
-        self.btn_start_test.setFixedHeight(34)
-        self.btn_start_test.setStyleSheet("""
-            QPushButton {
-                background-color: #0284c7;
-                color: #ffffff;
-                font-weight: bold;
-                font-size: 12px;
-                border: 1px solid #38bdf8;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #0369a1;
-            }
-            QPushButton:disabled {
-                background-color: #3f3f46;
-                color: #71717a;
-                border: 1px solid #52525b;
-            }
-        """)
-        self.btn_start_test.clicked.connect(self.start_diagnostic_test)
-        lay_test.addWidget(self.btn_start_test)
+        self.btn_start_test = QPushButton("▶️ Start Sample Test")
+        self.btn_start_test.setFixedHeight(32)
+        self.btn_start_test.setStyleSheet(
+            "QPushButton { background-color: #0284c7; color: #fff; font-weight: bold; border-radius: 4px; padding: 4px 12px; }"
+            "QPushButton:hover { background-color: #0369a1; }"
+        )
+        self.btn_start_test.clicked.connect(self._toggle_sample_test)
+        row_dur.addWidget(self.btn_start_test, 1)
+        lay_c.addLayout(row_dur)
 
-        # Phase / Prompt Label
-        self.lbl_prompt = QLabel("Click 'Start 5-Second Diagnostic Test' to begin calibration.")
-        self.lbl_prompt.setStyleSheet("font-size: 11px; font-weight: 600; color: #fbbf24;")
-        self.lbl_prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lay_test.addWidget(self.lbl_prompt)
+        row_prog = QHBoxLayout()
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        row_prog.addWidget(self.progress, 1)
+        self.lbl_timer = QLabel("Idle")
+        self.lbl_timer.setFixedWidth(110)
+        self.lbl_timer.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.lbl_timer.setStyleSheet("font-family: monospace; font-weight: bold; color: #38bdf8;")
+        row_prog.addWidget(self.lbl_timer)
+        lay_c.addLayout(row_prog)
+        lay.addWidget(grp_ctrl)
 
-        # Progress bar
-        self.prog_bar = QProgressBar()
-        self.prog_bar.setRange(0, 100)
-        self.prog_bar.setValue(0)
-        self.prog_bar.setFixedHeight(12)
-        self.prog_bar.setTextVisible(False)
-        self.prog_bar.setStyleSheet("""
-            QProgressBar { background-color: #18181b; border: 1px solid #3f3f46; border-radius: 3px; }
-            QProgressBar::chunk { background-color: #38bdf8; border-radius: 2px; }
-        """)
-        lay_test.addWidget(self.prog_bar)
+        # 2. Live Prosody Gauges (Tester Harness Style)
+        grp_gauges = QGroupBox("2. Live Prosody Gauges (20 Hz DSP)")
+        lay_g = QVBoxLayout(grp_gauges)
+        lay_g.setSpacing(4)
 
-        # Live Mini VU Meter
-        self.meter_live = MiniVUMeter(self)
-        lay_test.addWidget(self.meter_live)
+        def _add_gauge(title: str, color: str, default_lbl: str, show_thresh: bool = False):
+            r = QHBoxLayout()
+            r.addWidget(QLabel(title))
+            r.addStretch()
+            lbl = QLabel(default_lbl)
+            lbl.setStyleSheet(f"color: {color}; font-weight: bold;")
+            r.addWidget(lbl)
+            lay_g.addLayout(r)
+            bar = DiagSegmentedBar(color, show_threshold=show_thresh)
+            lay_g.addWidget(bar)
+            return lbl, bar
 
-        lay.addWidget(box_test)
+        self.lbl_g_loudness, self.bar_g_loudness = _add_gauge("Loudness (RMS/Peak):", "#eab308", "0%")
+        self.lbl_g_vad, self.bar_g_vad = _add_gauge("Voice Activity (VAD):", "#22c55e", "0% (Idle)")
+        self.lbl_g_f0, self.bar_g_f0 = _add_gauge("Pitch Tracking (F0):", "#a855f7", "0 Hz (Unvoiced)")
+        self.lbl_g_laugh, self.bar_g_laugh = _add_gauge("Laughter Cadence (4-6Hz):", "#f97316", "0%")
+        self.lbl_g_hype, self.bar_g_hype = _add_gauge("🔥 COMPOSITE HYPE SCORE:", "#ef4444", "0% [Thresh: 75%]", show_thresh=True)
 
-        # Report Viewer
-        lay.addWidget(QLabel("<b>Diagnostic Telemetry Summary:</b>"))
+        self.lbl_g_classified = QLabel("🎙️ Classified: Idle / Ambient")
+        self.lbl_g_classified.setStyleSheet("color: #38bdf8; font-weight: bold; margin-top: 4px;")
+        lay_g.addWidget(self.lbl_g_classified)
+        lay.addWidget(grp_gauges)
+
+        # 3. Sample Counters Grid
+        grp_cnt = QGroupBox("3. Live Sample Event Counters")
+        grid_cnt = QGridLayout(grp_cnt)
+        self.lbl_cnt_markers = QLabel("🔥 Markers / Clips: 0")
+        self.lbl_cnt_secondary = QLabel("⏱️ Cooldown Secondaries: 0")
+        self.lbl_cnt_possible = QLabel("⚡ Possible Moments: 0")
+        self.lbl_cnt_thumps = QLabel("🛑 Desk Bumps Rejected: 0")
+        self.lbl_cnt_ignored = QLabel("🔇 Noise Ignores: 0")
+        self.lbl_cnt_peaks = QLabel("📊 Avg Speech: --% | Peak: --%")
+        for idx, lbl in enumerate([
+            self.lbl_cnt_markers, self.lbl_cnt_secondary, self.lbl_cnt_possible,
+            self.lbl_cnt_thumps, self.lbl_cnt_ignored, self.lbl_cnt_peaks
+        ]):
+            lbl.setStyleSheet("font-weight: bold; padding: 3px;")
+            grid_cnt.addWidget(lbl, idx // 2, idx % 2)
+        lay.addWidget(grp_cnt)
+
+        # 4. Analysis, Suggestions & Report
+        grp_rep = QGroupBox("4. Calibration Analysis & Setting Suggestions")
+        lay_r = QVBoxLayout(grp_rep)
         self.txt_report = QTextEdit()
         self.txt_report.setReadOnly(True)
-        self.txt_report.setStyleSheet("font-family: 'Consolas', 'Courier New', monospace; font-size: 10.5px; background-color: #121214; color: #d4d4d8; border: 1px solid #27272a; border-radius: 4px;")
-        self.txt_report.setPlaceholderText("Diagnostic test results and telemetry metrics will appear here after completing the 5-second test...")
-        lay.addWidget(self.txt_report)
+        self.txt_report.setMinimumHeight(170)
+        self.txt_report.setStyleSheet("font-family: Consolas, monospace; font-size: 11px;")
+        self.txt_report.setPlaceholderText("Run a sample test above to see event counts, acoustic stats, and recommended settings...")
+        lay_r.addWidget(self.txt_report)
+        lay.addWidget(grp_rep)
 
-        # Action Buttons
-        row_actions = QHBoxLayout()
-        self.btn_copy = QPushButton("📋 Copy Diagnostic Report")
-        self.btn_copy.setEnabled(False)
-        self.btn_copy.clicked.connect(self.copy_report)
-        row_actions.addWidget(self.btn_copy)
+        scroll.setWidget(content)
+        outer.addWidget(scroll, 1)
 
-        self.btn_bug_report = QPushButton("🐞 Attach to Bug Report...")
-        self.btn_bug_report.setEnabled(False)
-        self.btn_bug_report.clicked.connect(self.attach_to_bug_report)
-        row_actions.addWidget(self.btn_bug_report)
+        # Footer Buttons
+        row_foot = QHBoxLayout()
+        self.btn_apply_recs = QPushButton("✨ Apply Recommended Settings")
+        self.btn_apply_recs.setEnabled(False)
+        self.btn_apply_recs.setStyleSheet(
+            "QPushButton:enabled { background-color: #16a34a; color: white; font-weight: bold; padding: 5px 12px; border-radius: 4px; }"
+        )
+        self.btn_apply_recs.clicked.connect(self._apply_recommendations)
+        row_foot.addWidget(self.btn_apply_recs)
 
-        row_actions.addStretch()
+        self.btn_copy_report = QPushButton("📋 Copy Report")
+        self.btn_copy_report.setEnabled(False)
+        self.btn_copy_report.clicked.connect(self._copy_report)
+        row_foot.addWidget(self.btn_copy_report)
 
+        row_foot.addStretch()
         btn_close = QPushButton("Close")
-        btn_close.setFixedWidth(75)
-        btn_close.clicked.connect(self._on_close)
-        row_actions.addWidget(btn_close)
-
-        lay.addLayout(row_actions)
+        btn_close.clicked.connect(self.close)
+        row_foot.addWidget(btn_close)
+        outer.addLayout(row_foot)
 
     def _populate_devices(self):
+        self.combo_device.blockSignals(True)
         self.combo_device.clear()
         devices = QMediaDevices.audioInputs()
-        selected_idx = 0
-        target_name = ""
-        if self.engine and self.engine.selected_device_name:
-            target_name = self.engine.selected_device_name.strip()
-
-        for idx, d in enumerate(devices):
+        target_name = getattr(self.engine, "selected_device_name", "") if self.engine else ""
+        sel_idx = 0
+        for i, d in enumerate(devices):
             desc = d.description()
             tag = " (Default)" if d.isDefault() else ""
             self.combo_device.addItem(f"{desc}{tag}", desc)
-            if target_name and desc.strip() == target_name:
-                selected_idx = idx
+            if target_name and desc.strip() == target_name.strip():
+                sel_idx = i
+        if devices:
+            self.combo_device.setCurrentIndex(sel_idx)
+        self.combo_device.blockSignals(False)
 
-        self.combo_device.setCurrentIndex(selected_idx)
-
-    def start_diagnostic_test(self):
+    def _toggle_sample_test(self):
         if self.is_testing:
-            return
+            self._finish_sample_test(stopped_early=True)
+        else:
+            self._start_sample_test()
+
+    def _start_sample_test(self):
+        dev_name = self.combo_device.currentData() or ""
+        secs = int(self.combo_duration.currentData() or 60)
+        self.total_ticks = secs * 20  # 50ms = 20 Hz
+        self.test_tick = 0
+        self._reset_sample_stats()
+        self._recommended_settings = {}
+        self.btn_apply_recs.setEnabled(False)
+        self.btn_copy_report.setEnabled(False)
+        self.txt_report.setPlainText(f"Sampling '{dev_name}' for {secs}s... Speak normally, laugh, or test desk bumps.")
+
+        # If the main AutoClipEngine is already capturing the exact selected device, tap it directly!
+        eng = self.engine
+        if eng and eng.enabled and eng.audio_io and (not dev_name or dev_name.strip() == (eng.selected_device_name or "").strip()):
+            self._using_engine_tap = True
+            eng.dsp_telemetry_updated.connect(self._on_external_dsp_tick)
+            eng.marker_triggered.connect(self._on_external_marker)
+            eng.secondary_peak_logged.connect(self._on_external_secondary)
+            eng.possible_peak_logged.connect(self._on_external_possible)
+            self.timer_sample.start()
+        else:
+            self._using_engine_tap = False
+            if not self._open_standalone_capture(dev_name):
+                return
+            self.timer_sample.start()
 
         self.is_testing = True
-        self.test_tick = 0
-        self.samples_rms.clear()
-        self.samples_peak.clear()
-        self.samples_level.clear()
-        self.samples_dbfs.clear()
-        self.clip_count = 0
-        self.prog_bar.setValue(0)
-
-        self.btn_start_test.setEnabled(False)
         self.combo_device.setEnabled(False)
-        self.btn_copy.setEnabled(False)
-        self.btn_bug_report.setEnabled(False)
-        self.txt_report.clear()
+        self.combo_duration.setEnabled(False)
+        self.btn_start_test.setText("⏹️ Stop Sample Test")
+        self.btn_start_test.setStyleSheet(
+            "QPushButton { background-color: #dc2626; color: #fff; font-weight: bold; border-radius: 4px; padding: 4px 12px; }"
+        )
 
-        # Start audio capture on chosen device
-        device_desc = self.combo_device.currentData()
-        target_dev = None
-        for d in QMediaDevices.audioInputs():
-            if d.description() == device_desc:
-                target_dev = d
-                break
+    def _open_standalone_capture(self, dev_name: str) -> bool:
+        devices = QMediaDevices.audioInputs()
+        target_dev = next((d for d in devices if d.description().strip() == dev_name.strip()), None)
         if not target_dev:
             target_dev = QMediaDevices.defaultAudioInput()
+        if not target_dev or target_dev.isNull():
+            QMessageBox.warning(self, "No Audio Device", "No valid audio input device found.")
+            return False
 
         fmt = target_dev.preferredFormat()
-        self._target_device_name = target_dev.description()
-        self._target_rate = fmt.sampleRate() or 48000
-        self._target_channels = max(1, fmt.channelCount())
-        self._target_format = fmt.sampleFormat()
-        self._target_is_default = target_dev.isDefault()
+        self._sample_format = fmt.sampleFormat()
+        self._sample_rate = fmt.sampleRate() or 48000
+        self._channels = fmt.channelCount() or 2
 
         try:
             self.audio_source = QAudioSource(target_dev, fmt, self)
             self.audio_io = self.audio_source.start()
-            self.timer_sample.start()
-            log_debug("AUDIO_DIAG", f"Started diagnostic audio test on: {self._target_device_name}")
+            if not self.audio_io:
+                QMessageBox.warning(self, "Audio Error", f"Could not open audio stream on '{target_dev.description()}'.")
+                return False
+            return True
         except Exception as e:
-            log_debug("AUDIO_DIAG", f"Error starting diagnostic audio capture: {e}")
-            self._cleanup_test()
-            QMessageBox.critical(self, "Audio Error", f"Unable to access audio input device: {e}")
+            QMessageBox.warning(self, "Audio Error", f"Failed to start capture: {e}")
+            return False
 
     def _on_sample_tick(self):
+        if not self.is_testing:
+            return
         self.test_tick += 1
-        pct = int((self.test_tick / self.total_ticks) * 100)
-        self.prog_bar.setValue(pct)
+        pct = min(100, int((self.test_tick / max(1, self.total_ticks)) * 100))
+        self.progress.setValue(pct)
+        rem_sec = max(0, int((self.total_ticks - self.test_tick) / 20))
+        self.lbl_timer.setText(f"{rem_sec // 60:02d}:{rem_sec % 60:02d} left")
 
-        # Update prompt
-        if self.test_tick <= 50:
-            rem = max(1, (50 - self.test_tick) // 20 + 1)
-            self.lbl_prompt.setText(f"🗣️ Phase 1/2 ({rem}s): Speak normally into your mic at standard talking volume...")
-            self.lbl_prompt.setStyleSheet("font-size: 11px; font-weight: 600; color: #38bdf8;")
-        else:
-            rem = max(1, (100 - self.test_tick) // 20 + 1)
-            self.lbl_prompt.setText(f"🔥 Phase 2/2 ({rem}s): Laugh loudly, cheer, or shout to test peak reaction level...")
-            self.lbl_prompt.setStyleSheet("font-size: 11px; font-weight: 600; color: #f97316;")
+        if not self._using_engine_tap and self.audio_io:
+            raw = self.audio_io.readAll().data()
+            if raw:
+                self._process_standalone_pcm(raw)
 
-        # Read samples
-        if self.audio_io:
-            try:
-                raw_bytes = self.audio_io.readAll().data()
-                byte_len = len(raw_bytes) if raw_bytes else 0
-                if byte_len >= 2:
-                    gain = (getattr(self.engine, "input_gain", 1.0) if self.engine else 1.0) * 2.5
-                    peak = 0.0
-                    rms = 0.0
-
-                    # 1. 32-bit Floating Point PCM (Standard for WASAPI / Windows 11 & VoiceMeeter)
-                    if getattr(self, "_target_format", None) == QAudioFormat.SampleFormat.Float:
-                        num_floats = byte_len // 4
-                        if num_floats > 0:
-                            floats = struct.unpack(f"<{num_floats}f", raw_bytes[:num_floats * 4])
-                            peak = min(1.0, max(abs(f) for f in floats) * gain)
-                            sum_sq = sum((f * gain) ** 2 for f in floats)
-                            rms = min(1.0, math.sqrt(sum_sq / len(floats)))
-                    # 2. 32-bit Signed Integer PCM
-                    elif getattr(self, "_target_format", None) == QAudioFormat.SampleFormat.Int32:
-                        num_ints = byte_len // 4
-                        if num_ints > 0:
-                            ints = struct.unpack(f"<{num_ints}i", raw_bytes[:num_ints * 4])
-                            peak = min(1.0, (max(abs(i) for i in ints) / 2147483647.0) * gain)
-                            sum_sq = sum(((i / 2147483647.0) * gain) ** 2 for i in ints)
-                            rms = min(1.0, math.sqrt(sum_sq / len(ints)))
-                    # 3. 16-bit Signed Integer PCM (Standard Fallback)
-                    else:
-                        num_shorts = byte_len // 2
-                        if num_shorts > 0:
-                            shorts = struct.unpack(f"<{num_shorts}h", raw_bytes[:num_shorts * 2])
-                            peak = min(1.0, (max(abs(s) for s in shorts) / 32767.0) * gain)
-                            sum_sq = sum(((s / 32767.0) * gain) ** 2 for s in shorts)
-                            rms = min(1.0, math.sqrt(sum_sq / len(shorts)))
-
-                    # Check clipping (digital saturation)
-                    if peak >= 0.999:
-                        self.clip_count += 1
-
-                    # Stevens perceptual level (square-root curve)
-                    p_rms = math.sqrt(rms) if rms > 0.0 else 0.0
-                    p_peak = math.sqrt(peak) if peak > 0.0 else 0.0
-                    level = min(1.0, max(0.0, 0.65 * p_rms + 0.35 * p_peak))
-
-                    dbfs = 20.0 * math.log10(max(1e-5, rms))
-
-                    self.samples_rms.append(rms)
-                    self.samples_peak.append(peak)
-                    self.samples_level.append(level)
-                    self.samples_dbfs.append(dbfs)
-                    self.meter_live.set_level(level)
-            except Exception as e:
-                log_debug("AUDIO_DIAG", f"Sample read exception: {e}")
-
-        # Finish test
         if self.test_tick >= self.total_ticks:
-            self._finish_test()
+            self._finish_sample_test(stopped_early=False)
 
-    def _finish_test(self):
-        self._cleanup_test()
-        self.lbl_prompt.setText("✅ 5-Second Diagnostic Test Complete! Review your report below.")
-        self.lbl_prompt.setStyleSheet("font-size: 11px; font-weight: bold; color: #22c55e;")
-        self.meter_live.set_level(0.0)
+    def _process_standalone_pcm(self, raw_bytes: bytes):
+        # Reuse AutoClipEngine's exact vectorized DSP if available
+        if self.engine:
+            old_fmt, old_sr, old_ch = self.engine._sample_format, self.engine._sample_rate, self.engine._channels
+            self.engine._sample_format = self._sample_format
+            self.engine._sample_rate = self._sample_rate
+            self.engine._channels = self._channels
+            dsp = self.engine._analyze_audio_frame(raw_bytes)
+            self.engine._sample_format, self.engine._sample_rate, self.engine._channels = old_fmt, old_sr, old_ch
+        else:
+            dsp = {"level": 0.0, "vocal_vad": False, "vad_confidence": 0.0, "f0_hz": 0.0, "f0_ratio": 1.0,
+                   "laughter_cadence": 0.0, "composite_hype": 0.0, "thump_rejected": False}
 
-        # Generate report
-        self.report_text = self._build_report()
-        self.txt_report.setPlainText(self.report_text)
-        self.btn_copy.setEnabled(True)
-        self.btn_bug_report.setEnabled(True)
+        self._record_dsp_frame(dsp)
 
-        # Save report to APP_DIR/audio_diagnostic.txt
-        try:
-            os.makedirs(APP_DIR, exist_ok=True)
-            report_file = os.path.join(APP_DIR, "audio_diagnostic.txt")
-            with open(report_file, "w", encoding="utf-8") as f:
-                f.write(self.report_text)
-            log_debug("AUDIO_DIAG", f"Saved audio diagnostic report to {report_file}")
-        except Exception as e:
-            log_debug("AUDIO_DIAG", f"Failed saving report file: {e}")
+        # Simulate threshold/event counters using current engine thresholds
+        lvl = float(dsp.get("level", 0.0))
+        thresh = float(getattr(self.engine, "current_threshold", 0.70) if self.engine else 0.70)
+        orange_thresh = thresh * 0.78
+        min_dur = int(getattr(self.engine, "min_duration_ms", 250) if self.engine else 250)
+        cd_sec = int(getattr(self.engine, "cooldown_duration_sec", 60) if self.engine else 60)
+        now = time.time()
 
-    def _cleanup_test(self):
+        if lvl >= thresh:
+            if self._sim_spike_start is None:
+                self._sim_spike_start = now
+            elif (now - self._sim_spike_start) * 1000.0 >= min_dur:
+                self._sim_spike_start = None
+                if now >= self._sim_cooldown_until:
+                    self.count_markers += 1
+                    self._sim_cooldown_until = now + cd_sec
+                else:
+                    self.count_secondary += 1
+                    self._sim_cooldown_until = max(self._sim_cooldown_until, now)
+        else:
+            self._sim_spike_start = None
+            if lvl >= orange_thresh and (now - self._last_possible_ts) >= 5.0:
+                self._last_possible_ts = now
+                self.count_possible += 1
+
+        self._refresh_counter_labels()
+
+    def _on_external_dsp_tick(self, dsp: dict):
+        if self.is_testing:
+            self._record_dsp_frame(dsp)
+            self._refresh_counter_labels()
+
+    def _on_external_marker(self, _payload: dict):
+        if self.is_testing:
+            self.count_markers += 1
+            self._refresh_counter_labels()
+
+    def _on_external_secondary(self, _payload: dict):
+        if self.is_testing:
+            self.count_secondary += 1
+            self._refresh_counter_labels()
+
+    def _on_external_possible(self, _payload: dict):
+        if self.is_testing:
+            self.count_possible += 1
+            self._refresh_counter_labels()
+
+    def _record_dsp_frame(self, dsp: dict):
+        lvl = float(dsp.get("level", 0.0))
+        vad = bool(dsp.get("vocal_vad", False))
+        vad_c = float(dsp.get("vad_confidence", 0.0))
+        f0 = float(dsp.get("f0_hz", 0.0))
+        laugh = float(dsp.get("laughter_cadence", 0.0))
+        hype = float(dsp.get("composite_hype", 0.0))
+        thump = bool(dsp.get("thump_rejected", False))
+        thresh = float(getattr(self.engine, "current_threshold", 0.70) if self.engine else 0.70)
+
+        self.samples_level.append(lvl)
+        self.samples_hype.append(hype)
+        if vad:
+            self.samples_speech_level.append(lvl)
+            if f0 > 0:
+                self.samples_f0.append(f0)
+        else:
+            self.samples_ambient_level.append(lvl)
+            if not thump:
+                self.count_noise_ignored += 1
+
+        now = time.time()
+        if thump and (now - self._last_thump_ts) >= 1.5:
+            self._last_thump_ts = now
+            self.count_thumps += 1
+
+        # Update Live Gauges
+        self.bar_g_loudness.set_value(lvl)
+        self.lbl_g_loudness.setText(f"{int(round(lvl * 100))}%")
+
+        self.bar_g_vad.set_value(vad_c if vad else 0.0)
+        self.lbl_g_vad.setText(f"{int(round(vad_c * 100))}% (Human Voice)" if vad else "0% (Idle)")
+
+        self.bar_g_f0.set_value(min(1.0, f0 / 550.0) if f0 > 0 else 0.0)
+        self.lbl_g_f0.setText(f"{f0:.0f} Hz ({dsp.get('f0_ratio', 1.0):.2f}x)" if f0 > 0 else "0 Hz (Unvoiced)")
+
+        self.bar_g_laugh.set_value(laugh)
+        self.lbl_g_laugh.setText(f"{int(round(laugh * 100))}%")
+
+        self.bar_g_hype.set_value(hype, thresh)
+        self.lbl_g_hype.setText(f"{int(round(hype * 100))}% [Thresh: {int(round(thresh * 100))}%]")
+
+        if thump:
+            self.lbl_g_classified.setText("🎙️ Classified: 🛑 Desk Bump / Sub-Bass Rejected")
+        elif vad and self.engine:
+            icon, label, _ = self.engine.classify_vocal_reaction(
+                lvl, f0, dsp.get("f0_ratio", 1.0), laugh, dsp.get("banter_cadence", 0.0), dsp.get("crest_factor", 1.0)
+            )
+            self.lbl_g_classified.setText(f"🎙️ Classified: {icon} {label}")
+        else:
+            self.lbl_g_classified.setText("🎙️ Classified: Idle / Ambient")
+
+    def _refresh_counter_labels(self):
+        self.lbl_cnt_markers.setText(f"🔥 Markers / Clips: {self.count_markers}")
+        self.lbl_cnt_secondary.setText(f"⏱️ Cooldown Secondaries: {self.count_secondary}")
+        self.lbl_cnt_possible.setText(f"⚡ Possible Moments: {self.count_possible}")
+        self.lbl_cnt_thumps.setText(f"🛑 Desk Bumps Rejected: {self.count_thumps}")
+        self.lbl_cnt_ignored.setText(f"🔇 Noise Ignores: {self.count_noise_ignored}")
+        avg_sp = int(round((sum(self.samples_speech_level) / len(self.samples_speech_level)) * 100)) if self.samples_speech_level else 0
+        pk = int(round(max(self.samples_level) * 100)) if self.samples_level else 0
+        self.lbl_cnt_peaks.setText(f"📊 Avg Speech: {avg_sp}% | Peak: {pk}%")
+
+    def _finish_sample_test(self, stopped_early: bool = False):
         self.timer_sample.stop()
+        self.is_testing = False
+
+        if self._using_engine_tap and self.engine:
+            for sig, slot in [
+                (self.engine.dsp_telemetry_updated, self._on_external_dsp_tick),
+                (self.engine.marker_triggered, self._on_external_marker),
+                (self.engine.secondary_peak_logged, self._on_external_secondary),
+                (self.engine.possible_peak_logged, self._on_external_possible),
+            ]:
+                try:
+                    sig.disconnect(slot)
+                except Exception:
+                    pass
         if self.audio_source:
             try:
                 self.audio_source.stop()
@@ -391,162 +533,93 @@ class AudioDiagnosticsDialog(QDialog):
                 pass
             self.audio_source = None
             self.audio_io = None
-        self.is_testing = False
-        self.btn_start_test.setEnabled(True)
+
         self.combo_device.setEnabled(True)
+        self.combo_duration.setEnabled(True)
+        self.btn_start_test.setText("▶️ Start Sample Test")
+        self.btn_start_test.setStyleSheet(
+            "QPushButton { background-color: #0284c7; color: #fff; font-weight: bold; border-radius: 4px; padding: 4px 12px; }"
+        )
+        self.progress.setValue(100 if not stopped_early else self.progress.value())
+        self.lbl_timer.setText("Stopped" if stopped_early else "Complete")
 
-    def _build_report(self) -> str:
-        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        total_samples = len(self.samples_level)
+        self._generate_analysis_report()
 
-        if total_samples == 0:
-            return "ERROR: No audio samples were captured during the diagnostic test. Please check device selection."
+    def _generate_analysis_report(self):
+        elapsed_sec = max(1, int(self.test_tick / 20))
+        dev_name = self.combo_device.currentData() or "Default"
+        avg_amb = (sum(self.samples_ambient_level) / len(self.samples_ambient_level)) if self.samples_ambient_level else 0.0
+        avg_sp = (sum(self.samples_speech_level) / len(self.samples_speech_level)) if self.samples_speech_level else 0.0
+        peak_lvl = max(self.samples_level) if self.samples_level else 0.0
+        med_f0 = sorted(self.samples_f0)[len(self.samples_f0) // 2] if self.samples_f0 else 0.0
 
-        # Compute statistics
-        avg_rms = sum(self.samples_rms) / total_samples
-        max_rms = max(self.samples_rms)
-        max_peak = max(self.samples_peak)
-        avg_level = sum(self.samples_level) / total_samples
-        max_level = max(self.samples_level)
+        recs = []
+        self._recommended_settings = {}
 
-        # Phase 1 (Speech: first half) & Phase 2 (Peak: second half)
-        half = total_samples // 2
-        speech_samples = self.samples_level[:half]
-        peak_samples = self.samples_level[half:]
-        avg_speech_level = (sum(speech_samples) / len(speech_samples)) if speech_samples else avg_level
-        max_shout_level = max(peak_samples) if peak_samples else max_level
+        if avg_amb >= 0.22:
+            recs.append(f"- High ambient noise floor ({int(avg_amb*100)}%): lower Input Gain Trim to 90% or raise Trigger Offset to +36%.")
+            self._recommended_settings["input_gain"] = 0.90
+            self._recommended_settings["trigger_offset"] = 0.36
+        elif peak_lvl < 0.45 and self.samples_speech_level:
+            recs.append(f"- Quiet peak levels (max {int(peak_lvl*100)}%): raise Input Gain Trim to 125% so reactions reach the Red zone.")
+            self._recommended_settings["input_gain"] = 1.25
 
-        # Noise floor (lowest 15% of samples)
-        sorted_levels = sorted(self.samples_level)
-        noise_idx = max(1, int(total_samples * 0.15))
-        ambient_noise_floor = sum(sorted_levels[:noise_idx]) / noise_idx
+        if self.count_markers == 0 and peak_lvl >= 0.45:
+            new_off = max(0.22, round((peak_lvl - max(0.30, avg_sp)) * 0.85, 2))
+            recs.append(f"- 0 Markers triggered during test (Peak {int(peak_lvl*100)}%): try Trigger Offset +{int(new_off*100)}% for more sensitivity.")
+            self._recommended_settings["trigger_offset"] = new_off
+        elif (self.count_markers + self.count_possible) / max(0.5, elapsed_sec / 60.0) > 5.0:
+            recs.append("- High trigger rate (>5/min): raise Trigger Offset (+35%) or Min Peak Duration (350ms) to avoid chatty triggers.")
+            self._recommended_settings["trigger_offset"] = 0.35
+            self._recommended_settings["min_duration_ms"] = 350
 
-        # Decibels
-        rms_dbfs = 20.0 * math.log10(max(1e-5, avg_rms))
-        peak_dbfs = 20.0 * math.log10(max(1e-5, max_peak))
-        noise_dbfs = 20.0 * math.log10(max(1e-5, ambient_noise_floor))
-        crest_factor = peak_dbfs - rms_dbfs
+        if self.count_thumps >= 2:
+            recs.append(f"- Detected {self.count_thumps} desk bumps/mic thumps: raise Desk Thump Filter to 75%.")
+            self._recommended_settings["desk_thump_sensitivity"] = 0.75
 
-        # Zone Distribution
-        green_cnt = sum(1 for x in self.samples_level if x < 0.28)
-        yellow_cnt = sum(1 for x in self.samples_level if 0.28 <= x < 0.52)
-        orange_cnt = sum(1 for x in self.samples_level if 0.52 <= x < 0.68)
-        red_cnt = sum(1 for x in self.samples_level if x >= 0.68)
+        if med_f0 > 0:
+            if med_f0 < 140:
+                recs.append(f"- Median speech F0 = {med_f0:.0f} Hz: Deep Voice profile fits well (or keep Dynamic Auto-Adapt).")
+            elif med_f0 > 205:
+                recs.append(f"- Median speech F0 = {med_f0:.0f} Hz: High/Expressive profile fits well (or keep Dynamic Auto-Adapt).")
+            else:
+                recs.append(f"- Median speech F0 = {med_f0:.0f} Hz: Mid/Conversational range detected.")
 
-        pct_green = (green_cnt / total_samples) * 100.0
-        pct_yellow = (yellow_cnt / total_samples) * 100.0
-        pct_orange = (orange_cnt / total_samples) * 100.0
-        pct_red = (red_cnt / total_samples) * 100.0
-
-        # Health assessment
-        findings = []
-        if 0.28 <= avg_speech_level <= 0.48:
-            findings.append("✓ Normal speaking volume sits in the Yellow zone (30%-48%) [OPTIMAL CALIBRATION].")
-        elif avg_speech_level < 0.28:
-            findings.append("⚠️ Normal speaking volume is too low (<28% - resting in Green). Increase microphone gain or VoiceMeeter fader.")
-        else:
-            findings.append("⚠️ Normal speaking volume is elevated (>48% - resting in Orange). Lower microphone gain slightly.")
-
-        if max_shout_level >= 0.68:
-            findings.append(f"✓ Peak laugh/shout reached {int(max_shout_level*100)}%, cleanly crossing into the Red trigger zone.")
-        else:
-            findings.append(f"⚠️ Peak laugh/shout reached only {int(max_shout_level*100)}% (below Red zone threshold 68%). Consider lowering Spike Trigger Offset slider.")
-
-        if self.clip_count > 0:
-            findings.append(f"⚠️ Digital clipping detected ({self.clip_count} frames saturated at 0 dBFS). Lower hardware mic input gain.")
-        else:
-            findings.append("✓ Clean acoustic headroom with zero digital clipping or distortion detected.")
-
-        if ambient_noise_floor < 0.15:
-            findings.append(f"✓ Low ambient noise floor ({int(ambient_noise_floor*100)}% / {noise_dbfs:.1f} dBFS) - Room background noise is well isolated.")
-        else:
-            findings.append(f"⚠️ Elevated ambient background noise ({int(ambient_noise_floor*100)}% / {noise_dbfs:.1f} dBFS). Check fan/room acoustics or adjust baseline.")
-
-        fmt = getattr(self, "_target_format", None)
-        if fmt == QAudioFormat.SampleFormat.Float:
-            sample_fmt_str = "32-Bit IEEE Floating Point PCM (Standard WASAPI)"
-        elif fmt == QAudioFormat.SampleFormat.Int32:
-            sample_fmt_str = "32-Bit Signed Integer PCM"
-        elif fmt == QAudioFormat.SampleFormat.Int16:
-            sample_fmt_str = "16-Bit Signed Integer PCM (Little Endian)"
-        else:
-            sample_fmt_str = f"PCM ({fmt})"
-
-        # Engine settings if available
-        eng_lines = []
-        if self.engine:
-            eng_lines = [
-                f"Master Enabled:           {'Yes' if self.engine.enabled else 'No (Disabled)'}",
-                f"Input Gain Trim:          {int(getattr(self.engine, 'input_gain', 1.0) * 100)}%",
-                f"Auto-Sensitivity Mode:    {'Yes (Discord-Style)' if self.engine.auto_sensitivity else 'No (Manual Threshold)'}",
-                f"Spike Trigger Offset:     +{int(self.engine.trigger_offset * 100)}%",
-                f"Current Red Threshold:    {int(self.engine.current_threshold * 100)}%",
-                f"Current Baseline Floor:   {int(self.engine.current_baseline * 100)}%",
-                f"Session Voice Anchor:     {int(getattr(self.engine, 'session_voice_anchor', 0.35) * 100)}% (Quiet Game Shield)",
-                f"Minimum Peak Duration:    {self.engine.min_duration_ms} ms",
-                f"Twitch Marker on Peak:    {'Yes' if self.engine.enabled else 'No'}",
-                f"Active Scenes Whitelist:  {self.engine.active_scenes}"
-            ]
+        if not recs:
+            recs.append("- Levels and thresholds look well balanced! No changes needed.")
 
         lines = [
-            "=" * 78,
-            "STREAMER CALYX - AUDIO INPUT DIAGNOSTIC TELEMETRY REPORT",
-            f"Generated: {now_str}",
-            f"Application Version: {get_full_version_string()}",
-            "=" * 78,
+            f"=== Streamer Calyx Audio Calibration Report ({get_full_version_string()}) ===",
+            f"Device: {dev_name} | Sample Duration: {elapsed_sec}s",
+            f"Events: Markers={self.count_markers}, CooldownClips={self.count_secondary}, "
+            f"Possible={self.count_possible}, DeskBumps={self.count_thumps}, NoiseIgnores={self.count_noise_ignored}",
+            f"Acoustic Stats: Ambient={int(avg_amb*100)}%, AvgSpeech={int(avg_sp*100)}%, Peak={int(peak_lvl*100)}%, MedianF0={med_f0:.0f}Hz",
             "",
-            "[1. AUDIO DEVICE CONFIGURATION]",
-            f"Device Name:              {self._target_device_name}",
-            f"System Default Device:    {'Yes' if self._target_is_default else 'No'}",
-            f"Sample Rate:              {self._target_rate} Hz",
-            f"Channel Count:            {self._target_channels} (Stereo)" if self._target_channels == 2 else f"Channel Count:            {self._target_channels} (Mono)",
-            f"Sample Format:            {sample_fmt_str}",
-            "",
-            "[2. SIGNAL LEVEL TELEMETRY (5-Second Analysis)]",
-            f"Ambient Room Noise Floor: {int(ambient_noise_floor * 100)}% ({noise_dbfs:.1f} dBFS)",
-            f"Average Speech Level:     {int(avg_speech_level * 100)}% ({rms_dbfs:.1f} dBFS)",
-            f"Peak Shout/Laugh Level:   {int(max_shout_level * 100)}% ({peak_dbfs:.1f} dBFS)",
-            f"Dynamic Crest Factor:     {crest_factor:.1f} dB",
-            f"Digital Audio Clipping:   {'None detected' if self.clip_count == 0 else f'{self.clip_count} saturated samples detected'}",
-            "",
-            "[3. ZONE DISTRIBUTION TELEMETRY]",
-            f"🟢 Green  (Ambient / Whispers):  {pct_green:5.1f}%  (Level < 28%)",
-            f"🟡 Yellow (Normal Talking):      {pct_yellow:5.1f}%  (Level 28% - 52%)",
-            f"🟠 Orange (Elevated Banter):     {pct_orange:5.1f}%  (Level 52% - 68%)",
-            f"🔴 Red    (Peak Reaction Spikes): {pct_red:5.1f}%  (Level >= 68%)",
-            ""
+            "Suggestions:",
+            *recs,
         ]
+        self.report_text = "\n".join(lines)
+        self.txt_report.setPlainText(self.report_text)
+        self.btn_copy_report.setEnabled(True)
+        self.btn_apply_recs.setEnabled(bool(self._recommended_settings))
 
-        if eng_lines:
-            lines.append("[4. AUTOCLIP ENGINE ACTIVE SETTINGS]")
-            lines.extend(eng_lines)
-            lines.append("")
-
-        lines.append("[5. DIAGNOSTIC ASSESSMENT & CALIBRATION VERDICT]")
-        for f in findings:
-            lines.append(f"  {f}")
-        lines.append("")
-        lines.append("=" * 78)
-
-        return "\n".join(lines)
-
-    def copy_report(self):
-        if not self.report_text:
+    def _apply_recommendations(self):
+        if not self.engine or not self._recommended_settings:
             return
-        cb = QGuiApplication.clipboard()
-        if cb:
-            cb.setText(self.report_text)
-        QMessageBox.information(self, "Copied", "Audio diagnostic telemetry report copied to clipboard.")
+        for k, v in self._recommended_settings.items():
+            if hasattr(self.engine, k):
+                setattr(self.engine, k, v)
+        if self.overlay_app and hasattr(self.overlay_app, "save_settings"):
+            self.overlay_app.save_settings()
+        QMessageBox.information(self, "Settings Applied", "Recommended calibration settings have been applied and saved!")
+        self.btn_apply_recs.setEnabled(False)
 
-    def attach_to_bug_report(self):
-        from bug_report_dialog import BugReportDialog
-        dlg = BugReportDialog(self, self.overlay_app)
-        dlg.exec()
-
-    def _on_close(self):
-        self._cleanup_test()
-        self.accept()
+    def _copy_report(self):
+        if self.report_text:
+            QGuiApplication.clipboard().setText(self.report_text)
+            QMessageBox.information(self, "Copied", "Calibration report copied to clipboard.")
 
     def closeEvent(self, event):
-        self._cleanup_test()
+        if self.is_testing:
+            self._finish_sample_test(stopped_early=True)
         super().closeEvent(event)
