@@ -1191,9 +1191,11 @@ class DirectorPanelWindow(QWidget):
         self.banner_temp_scene = None
         self._last_local_scene_click_ts = 0.0
         self._pending_scene_target = None
+        self._inflight_scene_target = None
+        self._inflight_scene_sent_ts = 0.0
         self._scene_switch_timer = QTimer(self)
         self._scene_switch_timer.setSingleShot(True)
-        self._scene_switch_timer.setInterval(450)
+        self._scene_switch_timer.setInterval(250)
         self._scene_switch_timer.timeout.connect(self._dispatch_pending_scene_switch)
 
         self._build_ui()
@@ -2211,11 +2213,14 @@ class DirectorPanelWindow(QWidget):
     def _on_scene_clicked(self, scene_id, name, btn):
         self.active_scene_index = scene_id
         self._last_local_scene_click_ts = time.time()
+        raw_id = getattr(btn, "scene_raw_id", "") or ""
+        self._active_scene_id = raw_id
+        self._active_scene_name = name or ""
         for b in self.scene_buttons:
             b.set_active(b == btn)
-        self.reflow_for_active_scene(name, getattr(btn, "scene_raw_id", ""))
+        self.reflow_for_active_scene(name, raw_id)
         self.scene_selected.emit(scene_id, name)
-        target = getattr(btn, "scene_raw_id", None) or name
+        target = raw_id or name
         if getattr(self, "client_webrtc", None) and self.client_webrtc.isRunning():
             self.client_webrtc.send_command("SWITCH_SCENE", target=name)
         elif hasattr(self, "slobs_client") and self.slobs_client and self.slobs_client.is_connected():
@@ -2226,7 +2231,14 @@ class DirectorPanelWindow(QWidget):
         target = getattr(self, "_pending_scene_target", None)
         if not target:
             return
+        inflight = getattr(self, "_inflight_scene_target", None)
+        if inflight and (time.time() - getattr(self, "_inflight_scene_sent_ts", 0.0)) < 12.0:
+            # Wait for SLOBS to finish its current transition before sending the latest target
+            return
         self._pending_scene_target = None
+        self._inflight_scene_target = target
+        self._inflight_scene_sent_ts = time.time()
+        QTimer.singleShot(12500, self._clear_stale_inflight_scene)
         client = getattr(self, "slobs_client", None)
         if client and client.is_connected():
             # QWebSocket ("remote") has main-thread affinity; Named Pipe ("local") can run async
@@ -2234,6 +2246,12 @@ class DirectorPanelWindow(QWidget):
                 client.make_scene_active(target)
             else:
                 threading.Thread(target=client.make_scene_active, args=(target,), daemon=True).start()
+
+    def _clear_stale_inflight_scene(self):
+        if getattr(self, "_inflight_scene_target", None) and (time.time() - getattr(self, "_inflight_scene_sent_ts", 0.0)) >= 12.0:
+            self._inflight_scene_target = None
+            if getattr(self, "_pending_scene_target", None):
+                self._dispatch_pending_scene_switch()
 
     def _on_audio_toggled(self, aid, name, is_muted):
         self.audio_toggled.emit(aid, name, is_muted)
@@ -2651,14 +2669,30 @@ class DirectorPanelWindow(QWidget):
             self.lbl_status.setText("<span style='color: #ef4444;'>● Disconnected</span>")
 
     def _on_slobs_scene_switched(self, scene_id, scene_name):
-        # Ignore stale/delayed SLOBS pipe echoes while a debounced switch is pending or shortly after a local click
+        ev_id = (scene_id or "").strip().lower()
+        ev_name = (scene_name or "").strip().lower()
+        inflight = (getattr(self, "_inflight_scene_target", None) or "").strip().lower()
+        if inflight and (ev_id == inflight or ev_name == inflight):
+            self._inflight_scene_target = None
+            pending = getattr(self, "_pending_scene_target", None)
+            if pending:
+                p_low = pending.strip().lower()
+                if p_low == ev_id or p_low == ev_name:
+                    self._pending_scene_target = None
+                else:
+                    self._dispatch_pending_scene_switch()
+                    return
+
+        # Ignore stale/delayed SLOBS pipe echoes while a switch is pending or in-flight
         if getattr(self, "_scene_switch_timer", None) and self._scene_switch_timer.isActive():
+            return
+        if getattr(self, "_pending_scene_target", None):
+            return
+        if getattr(self, "_inflight_scene_target", None) and (time.time() - getattr(self, "_inflight_scene_sent_ts", 0.0)) < 12.0:
             return
         if (time.time() - getattr(self, "_last_local_scene_click_ts", 0.0)) < 3.0:
             cur_id = (getattr(self, "_active_scene_id", "") or "").strip().lower()
             cur_name = (getattr(self, "_active_scene_name", "") or "").strip().lower()
-            ev_id = (scene_id or "").strip().lower()
-            ev_name = (scene_name or "").strip().lower()
             if (ev_id and cur_id and ev_id != cur_id) or (ev_name and cur_name and ev_name != cur_name):
                 return
         self._active_scene_id = scene_id or ""
