@@ -15,6 +15,7 @@ hidden_imports = [
     'splash_screen',
     'director_tab',
     'director_panel',
+    'lan_video_bridge',
     'streamlabs_client',
     'director_security',
     'webrtc_p2p',

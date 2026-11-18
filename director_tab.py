@@ -595,6 +595,7 @@ class DirectorTab(QWidget):
 
         self.soundboard_lan_server: Optional[SoundboardLANServer] = None
         self.soundboard_lan_client: Optional[SoundboardLANClient] = None
+        self.lan_video_server = None
         self.remote_soundboard_clips: List[dict] = []
 
         self._is_loading = True
@@ -1143,6 +1144,28 @@ class DirectorTab(QWidget):
         self.box_host_p2p_details.setVisible(False)
         lay_gateway.addWidget(self.box_host_p2p_details)
         lay_remote_content.addWidget(self.grp_gateway)
+
+        # ------------------ PHASE 12: LAN LOW-LATENCY VIDEO FEED ------------------
+        grp_vid = QGroupBox("📺 Local LAN Low-Latency Video Preview Feed")
+        lay_vid = QVBoxLayout(grp_vid)
+        lay_vid.setSpacing(6)
+        self.chk_lan_video = QCheckBox("Stream low-latency preview frames to Director Panels (Port 59652)")
+        self.chk_lan_video.toggled.connect(self._on_lan_video_settings_changed)
+        lay_vid.addWidget(self.chk_lan_video)
+
+        row_fps = QHBoxLayout()
+        row_fps.addWidget(QLabel("Preview FPS Throttle:"))
+        self.combo_lan_fps = QComboBox()
+        for fps_val, lbl_fps in [(1, "1 FPS (Ultra-Low CPU)"), (5, "5 FPS (Balanced)"), (10, "10 FPS (Smooth)"), (15, "15 FPS (High)")]:
+            self.combo_lan_fps.addItem(lbl_fps, fps_val)
+        self.combo_lan_fps.setCurrentIndex(1)  # 5 FPS default
+        self.combo_lan_fps.currentIndexChanged.connect(self._on_lan_video_settings_changed)
+        row_fps.addWidget(self.combo_lan_fps, 1)
+        self.lbl_lan_video_status = QLabel("● Offline")
+        self.lbl_lan_video_status.setStyleSheet("font-size: 10px; color: #a1a1aa; font-weight: bold;")
+        row_fps.addWidget(self.lbl_lan_video_status)
+        lay_vid.addLayout(row_fps)
+        lay_remote_content.addWidget(grp_vid)
 
         # Compatibility hidden input for edit_allowed_twitch_user
         self.edit_allowed_twitch_user = QLineEdit()
@@ -2703,6 +2726,8 @@ class DirectorTab(QWidget):
             "faders": self._get_fader_data(),
             "fader_pool": self._get_active_fader_pool(),
             "orientation": self.panel_window.orientation if self.is_panel_open() else getattr(self, "dock_orientation", "horizontal"),
+            "lan_video_enabled": self.chk_lan_video.isChecked() if hasattr(self, "chk_lan_video") else False,
+            "lan_video_fps": self.combo_lan_fps.currentData() if hasattr(self, "combo_lan_fps") else 5,
         }
 
     def _on_panel_orientation_changed(self, mode: str):
@@ -2725,6 +2750,12 @@ class DirectorTab(QWidget):
 
                 self.remote_port = d.get("remote_port", "59650")
                 self.api_key = obfuscate_str(d.get("api_key_obf", ""))
+                if hasattr(self, "chk_lan_video"):
+                    self.chk_lan_video.setChecked(bool(d.get("lan_video_enabled", False)))
+                if hasattr(self, "combo_lan_fps"):
+                    fps_idx = self.combo_lan_fps.findData(int(d.get("lan_video_fps", 5)))
+                    if fps_idx >= 0:
+                        self.combo_lan_fps.setCurrentIndex(fps_idx)
 
                 self.enable_wan_p2p = d.get("enable_wan_p2p", False)
                 self.p2p_passkey_salt = d.get("p2p_passkey_salt", "")
@@ -3440,6 +3471,38 @@ class DirectorTab(QWidget):
             except Exception:
                 pass
             self.soundboard_lan_client = None
+        if getattr(self, "lan_video_server", None):
+            try:
+                self.lan_video_server.stop()
+            except Exception:
+                pass
+            self.lan_video_server = None
+
+    def _on_lan_video_settings_changed(self):
+        enabled = self.chk_lan_video.isChecked() if hasattr(self, "chk_lan_video") else False
+        fps = int(self.combo_lan_fps.currentData() or 5) if hasattr(self, "combo_lan_fps") else 5
+        mon_idx = self.combo_monitor.currentData() if hasattr(self, "combo_monitor") else 0
+        if enabled:
+            if self.lan_video_server is None:
+                from lan_video_bridge import LANVideoServer
+                self.lan_video_server = LANVideoServer(fps=fps, monitor_index=mon_idx or 0, parent=self)
+                self.lan_video_server.client_count_changed.connect(
+                    lambda c: self.lbl_lan_video_status.setText(f"● Live ({c} viewer{'s' if c != 1 else ''})")
+                    if hasattr(self, "lbl_lan_video_status") else None
+                )
+            self.lan_video_server.set_monitor_index(mon_idx or 0)
+            self.lan_video_server.set_fps(fps)
+            if self.lan_video_server.start():
+                self.lbl_lan_video_status.setText(f"● Live ({fps} FPS)")
+                self.lbl_lan_video_status.setStyleSheet("font-size: 10px; color: #22c55e; font-weight: bold;")
+        else:
+            if self.lan_video_server:
+                self.lan_video_server.stop()
+            if hasattr(self, "lbl_lan_video_status"):
+                self.lbl_lan_video_status.setText("● Offline")
+                self.lbl_lan_video_status.setStyleSheet("font-size: 10px; color: #a1a1aa; font-weight: bold;")
+        if not getattr(self, "_is_loading", False):
+            self.save_to_settings()
 
     def closeEvent(self, event):
         self.shutdown()

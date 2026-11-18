@@ -1287,6 +1287,28 @@ class DirectorPanelWindow(QWidget):
         self.btn_record.clicked.connect(self._on_record_clicked)
         top_bar.addWidget(self.btn_record)
 
+        self.btn_video_feed = QPushButton("📺 Feed")
+        self.btn_video_feed.setCheckable(True)
+        self.btn_video_feed.setFixedHeight(20)
+        self.btn_video_feed.setMinimumWidth(52)
+        self.btn_video_feed.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_video_feed.setToolTip("Toggle live LAN low-latency preview feed")
+        self.btn_video_feed.setStyleSheet("""
+            QPushButton {
+                background: #27272a;
+                color: #38bdf8;
+                border: 1px solid #3f3f46;
+                border-radius: 10px;
+                font-size: 10px;
+                font-weight: bold;
+                padding: 0 6px;
+            }
+            QPushButton:checked { background: #0284c7; color: #ffffff; border-color: #38bdf8; }
+            QPushButton:hover { border-color: #38bdf8; }
+        """)
+        self.btn_video_feed.toggled.connect(self._on_video_feed_toggled)
+        top_bar.addWidget(self.btn_video_feed)
+
         self.btn_resync = QPushButton("🔄")
         self.btn_resync.setFixedSize(20, 20)
         self.btn_resync.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -1597,19 +1619,50 @@ class DirectorPanelWindow(QWidget):
         return bool(self._last_permissions.get("allow_recording_control", False))
 
     def update_recording_state(self, status: str):
-        """Updates the top-bar recording button text/style and permission lock."""
+        """Updates the top-bar recording button text/style, permission lock, and live elapsed timer."""
         if not hasattr(self, "btn_record"):
             return
+        if not hasattr(self, "_rec_elapsed_timer"):
+            self._rec_elapsed_timer = QTimer(self)
+            self._rec_elapsed_timer.setInterval(1000)
+            self._rec_elapsed_timer.timeout.connect(self._refresh_recording_timer_label)
+            self._rec_start_ts = 0.0
+            self._rec_is_active = False
+
         permitted = self.is_recording_permitted()
         is_rec = str(status or "").lower() in ("recording", "starting")
+        self._rec_is_active = is_rec
+        if is_rec:
+            if not self._rec_start_ts:
+                self._rec_start_ts = time.time()
+            if not self._rec_elapsed_timer.isActive():
+                self._rec_elapsed_timer.start()
+        else:
+            self._rec_elapsed_timer.stop()
+            self._rec_start_ts = 0.0
+
+        self._refresh_recording_timer_label(permitted=permitted)
+
+    def _refresh_recording_timer_label(self, permitted: bool = None):
+        if not hasattr(self, "btn_record"):
+            return
+        if permitted is None:
+            permitted = self.is_recording_permitted()
+        is_rec = getattr(self, "_rec_is_active", False)
+        elapsed_str = ""
+        if is_rec and getattr(self, "_rec_start_ts", 0.0) > 0:
+            sec = max(0, int(time.time() - self._rec_start_ts))
+            h, m, s = sec // 3600, (sec % 3600) // 60, sec % 60
+            elapsed_str = f" [{h:02d}:{m:02d}:{s:02d}]"
+
         if not permitted:
             self.btn_record.setEnabled(False)
-            self.btn_record.setText("⏺️ 🔒" if not is_rec else "⏹️ REC 🔒")
+            self.btn_record.setText("⏺️ 🔒" if not is_rec else f"● REC{elapsed_str} 🔒")
             self.btn_record.setToolTip("🔒 Locked: Recording control permission not granted by Streamer")
         else:
             self.btn_record.setEnabled(True)
             if is_rec:
-                self.btn_record.setText("⏹️ REC")
+                self.btn_record.setText(f"● REC{elapsed_str}")
                 self.btn_record.setToolTip("Recording active! Click to stop recording.")
                 self.btn_record.setStyleSheet("""
                     QPushButton {
@@ -1642,6 +1695,42 @@ class DirectorPanelWindow(QWidget):
                         border-color: #f43f5e;
                     }
                 """)
+
+    def _on_video_feed_toggled(self, checked: bool):
+        if not hasattr(self, "lbl_video_feed"):
+            self.lbl_video_feed = QLabel("Connecting to LAN Video Feed...")
+            self.lbl_video_feed.setFixedSize(240, 135)
+            self.lbl_video_feed.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.lbl_video_feed.setStyleSheet(
+                "background-color: #09090b; color: #71717a; border: 1px solid #3f3f46; border-radius: 6px; font-size: 10px;"
+            )
+            if hasattr(self, "main_layout"):
+                self.main_layout.insertWidget(1, self.lbl_video_feed, 0, Qt.AlignmentFlag.AlignCenter)
+        if not hasattr(self, "_lan_video_client"):
+            from lan_video_bridge import LANVideoClient
+            self._lan_video_client = LANVideoClient(self)
+            self._lan_video_client.frame_received.connect(self._on_lan_video_frame)
+            self._lan_video_client.connection_changed.connect(self._on_lan_video_conn_changed)
+
+        self.lbl_video_feed.setVisible(checked)
+        if checked:
+            host = getattr(self, "_lan_video_host", "127.0.0.1")
+            self._lan_video_client.connect_to_host(host)
+        else:
+            self._lan_video_client.disconnect_feed()
+        self.adjustSize()
+
+    def set_lan_video_host(self, host: str):
+        self._lan_video_host = (host or "127.0.0.1").strip()
+
+    def _on_lan_video_conn_changed(self, connected: bool):
+        if hasattr(self, "lbl_video_feed") and not connected:
+            self.lbl_video_feed.setPixmap(QPixmap())
+            self.lbl_video_feed.setText("LAN Video Feed Offline\n(Enable in Director Settings)")
+
+    def _on_lan_video_frame(self, pix):
+        if hasattr(self, "lbl_video_feed") and self.lbl_video_feed.isVisible():
+            self.lbl_video_feed.setPixmap(pix.scaled(self.lbl_video_feed.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
 
     def _on_record_clicked(self):
         if not self.is_recording_permitted():
