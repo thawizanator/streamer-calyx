@@ -1161,12 +1161,12 @@ class TwitchTab(QWidget):
                 missing_hk_rows.append(idx + 1)
 
         self.main_win.overlay.twitch_macros = p_macros
-        self.main_win.overlay.save_settings()
         self._syncing_macros = True
         try:
             self.main_win.overlay.rebind_twitch_macros()
         finally:
             self._syncing_macros = False
+        self.main_win.overlay.save_settings()
 
         if hasattr(self, "lbl_save_status"):
             if missing_hk_rows:
