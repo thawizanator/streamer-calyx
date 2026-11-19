@@ -239,33 +239,41 @@ class LANVideoServer(QObject):
             return QPixmap()
         try:
             import win32gui
+            import win32api
+            import win32con
             l, t, r, b = win32gui.GetWindowRect(hwnd)
             w, h = r - l, b - t
             if w < 100 or h < 100:
                 return QPixmap()
+
+            hmon = win32api.MonitorFromWindow(hwnd, win32con.MONITOR_DEFAULTTONEAREST)
+            mon_info = win32api.GetMonitorInfo(hmon)
+            mon_l, mon_t, mon_r, mon_b = mon_info["Monitor"]
+
             cx, cy = l + w // 2, t + h // 2
             screens = QGuiApplication.screens()
             target_scr = screens[0] if screens else None
             for s in screens:
                 sg = s.geometry()
+                if sg.contains(cx, cy):
+                    target_scr = s
+                    break
+            # Fallback match by physical monitor dimensions if mixed-DPI virtual coords differ
+            mon_w, mon_h = mon_r - mon_l, mon_b - mon_t
+            for s in screens:
                 dpr = s.devicePixelRatio() or 1.0
-                phys_rect_x1 = int(sg.x() * dpr)
-                phys_rect_y1 = int(sg.y() * dpr)
-                phys_rect_x2 = phys_rect_x1 + int(sg.width() * dpr)
-                phys_rect_y2 = phys_rect_y1 + int(sg.height() * dpr)
-                if phys_rect_x1 <= cx <= phys_rect_x2 and phys_rect_y1 <= cy <= phys_rect_y2:
+                if abs(int(round(s.geometry().width() * dpr)) - mon_w) <= 4 and abs(int(round(s.geometry().height() * dpr)) - mon_h) <= 4:
                     target_scr = s
                     break
             if not target_scr:
                 return QPixmap()
-            sg = target_scr.geometry()
-            dpr = target_scr.devicePixelRatio() or 1.0
             full = target_scr.grabWindow(0)
             if full.isNull():
                 return QPixmap()
-            # Crop in physical pixels relative to target_scr origin
-            crop_x = max(0, l - int(round(sg.x() * dpr)))
-            crop_y = max(0, t - int(round(sg.y() * dpr)))
+
+            # Exact physical pixel offset relative to the Win32 monitor origin
+            crop_x = max(0, l - mon_l)
+            crop_y = max(0, t - mon_t)
             crop_w = min(full.width() - crop_x, w)
             crop_h = min(full.height() - crop_y, h)
             if crop_w < 50 or crop_h < 50:
