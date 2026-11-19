@@ -261,6 +261,10 @@ class StreamLaunchTab(QWidget):
         chk_row.addStretch()
         opt_layout.addLayout(chk_row)
 
+        self.lbl_chk_gateway = QLabel("• 🌐 Armed Destinations: <b>Twitch</b>")
+        self.lbl_chk_gateway.setStyleSheet("font-size: 11px; color: #efeff1;")
+        opt_layout.addWidget(self.lbl_chk_gateway)
+
         lay_launch.addWidget(opt_box)
 
         # Big Master Launch + De-Orbit Row
@@ -562,6 +566,14 @@ class StreamLaunchTab(QWidget):
                 self.lbl_chk_audio.setText(f"• 🎙️ Auto-Clip Audio: <b style='color: #22c55e;'>Armed ({dev_name[:28]})</b>")
             else:
                 self.lbl_chk_audio.setText("• 🎙️ Auto-Clip Audio: <span style='color: #a1a1aa;'>Standby / Opt-In</span>")
+
+            # 3b. Multi-Platform Gateway Destinations
+            gw = getattr(self.overlay, "platform_gateway", None)
+            if gw and hasattr(self, "lbl_chk_gateway"):
+                dests = gw.get_active_destinations()
+                dest_str = ", ".join(d.capitalize() for d in dests) if dests else "None"
+                dry = " <span style='color:#fbbf24;'>[DRY-RUN]</span>" if getattr(gw, "dry_run_mode", False) else ""
+                self.lbl_chk_gateway.setText(f"• 🌐 Armed Destinations: <b style='color: #38bdf8;'>{dest_str}</b>{dry}")
 
             # 4. Overlay Status
             border_armed = getattr(self.overlay, "primary_hotkey_enabled", False)

@@ -527,6 +527,8 @@ class RedBorderOverlay(QMainWindow):
         slobs_cli = get_streamlabs_client()
         self.ifttt_engine = IFTTTRuleEngine(overlay=self, slobs_client=slobs_cli, parent=self)
         self.deorbit_engine = DeOrbitSequenceEngine(overlay=self, slobs_client=slobs_cli, ifttt_engine=self.ifttt_engine, parent=self)
+        from platform_gateway import MultiPlatformGateway
+        self.platform_gateway = MultiPlatformGateway(overlay=self, parent=self)
         if slobs_cli:
             slobs_cli.scene_switched.connect(lambda _id, name: self.ifttt_engine.fire_trigger("scene_switched", name))
             if hasattr(slobs_cli, "streaming_status_changed"):
@@ -734,6 +736,8 @@ class RedBorderOverlay(QMainWindow):
                         self.deorbit_engine.import_settings(d.get("deorbit", {}))
                     if hasattr(self, "ifttt_engine") and self.ifttt_engine and "ifttt_rules" in d:
                         self.ifttt_engine.load_rules(d.get("ifttt_rules", []))
+                    if hasattr(self, "platform_gateway") and self.platform_gateway and "gateway" in d:
+                        self.platform_gateway.import_settings(d.get("gateway", {}))
                     self.director_settings = d.get("director", {})
                     if hasattr(self, "input_manager") and self.input_manager:
                         self.input_manager.load_bindings(d)
@@ -794,6 +798,8 @@ class RedBorderOverlay(QMainWindow):
             d["deorbit"] = self.deorbit_engine.export_settings()
         if hasattr(self, "ifttt_engine") and self.ifttt_engine:
             d["ifttt_rules"] = self.ifttt_engine.export_rules()
+        if hasattr(self, "platform_gateway") and self.platform_gateway:
+            d["gateway"] = self.platform_gateway.export_settings()
         if hasattr(self, "settings_window") and self.settings_window and hasattr(self.settings_window, "tab_director"):
             self.director_settings = self.settings_window.tab_director.export_settings()
         if hasattr(self, "director_settings") and self.director_settings:
@@ -1134,8 +1140,11 @@ class RedBorderOverlay(QMainWindow):
         cmd = self.twitch_macros[slot_index]["command"]
         log_debug("MACRO", f"Triggered macro slot {slot_index}: command='{cmd}'")
         if cmd in ["/marker [username]", "/marker"]:
-            # Drop marker using streamer's username as description without interrupting gameplay
-            self.dispatch_twitch_call(cmd, self.twitch_channel)
+            # Drop marker across all enabled broadcast destinations without interrupting gameplay
+            if hasattr(self, "platform_gateway") and self.platform_gateway:
+                self.platform_gateway.dispatch_marker(self.twitch_channel or "Highlight")
+            else:
+                self.dispatch_twitch_call(cmd, self.twitch_channel)
         elif "[description]" in cmd or "[username]" in cmd:
             if self.streamer_mode:
                 log_debug("INPUT", f"Showing transparent in-game HUD overlay for command='{cmd}'")
@@ -1222,8 +1231,11 @@ class RedBorderOverlay(QMainWindow):
         if flash_overlay:
             self.flash_temporary_alert(duration_ms=1500, color=QColor(alert_color))
 
-        # 3. Drop Twitch Stream Marker (if Streamer Mode & Twitch connected)
-        if self.twitch_token and self.twitch_channel:
+        # 3. Drop Multi-Platform Stream Marker (Twitch / YouTube Live / Kick)
+        if hasattr(self, "platform_gateway") and self.platform_gateway:
+            log_debug("AUTOCLIP", f"Dispatching Multi-Platform Stream Marker: '{desc}'")
+            self.platform_gateway.dispatch_marker(desc)
+        elif self.twitch_token and self.twitch_channel:
             log_debug("AUTOCLIP", f"Dropping Twitch Stream Marker: '{desc}' on channel '{self.twitch_channel}'")
             self.dispatch_twitch_call("/marker", desc)
 

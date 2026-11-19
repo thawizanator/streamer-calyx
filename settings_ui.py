@@ -33,6 +33,8 @@ from about_tab import AboutTab
 from stream_launch_tab import StreamLaunchTab
 from logs_tab import LogsTab
 from audio_tab import AudioTab
+from gateway_tab import MultiPlatformGatewayTab
+from platform_gateway import MultiPlatformGateway
 from setup_wizard import SetupWizardDialog
 from context_help import ContextHelpFilter
 
@@ -1794,7 +1796,8 @@ PAGE_TITLES = {
     11: "🚀  Stream Launchpad & Mission Control",
     12: "📑  Logs & Diagnostics Suite",
     13: "🌸  About Streamer Calyx",
-    14: "🎧  Audio Devices & Routing"
+    14: "🎧  Audio Devices & Routing",
+    15: "🌐  Multi-Platform Broadcast Gateway"
 }
 
 SIDEBAR_CATEGORIES = [
@@ -1812,6 +1815,7 @@ SIDEBAR_CATEGORIES = [
     ]),
     ("tools", "STREAM TOOLS", [
         (3, "🟣  Twitch Macros", "btn_nav_twitch"),
+        (15, "🌐  Multi-Platform", "btn_nav_gateway"),
         (5, "⏱️  Chronos Timers", "btn_nav_chronos"),
         (6, "📜  Rotating Text", "btn_nav_trivia"),
         (7, "🎬  Stream Director", "btn_nav_director"),
@@ -2066,6 +2070,14 @@ class SettingsWindow(QWidget):
         # Initialize Master Audio Devices & Routing Tab (idx 14)
         self.tab_audio = AudioTab(self)
         self.stacked_pages.addWidget(self.tab_audio)             # 14
+
+        # Initialize Multi-Platform Broadcast Gateway Tab (Phase 13, idx 15)
+        gw = getattr(self.overlay, "platform_gateway", None)
+        if gw is None:
+            gw = MultiPlatformGateway(overlay=self.overlay, parent=self)
+        self.platform_gateway = gw
+        self.tab_gateway = MultiPlatformGatewayTab(self, gw)
+        self.stacked_pages.addWidget(self.tab_gateway)           # 15
 
         content_layout.addWidget(self.stacked_pages)
 
