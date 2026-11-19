@@ -1748,7 +1748,7 @@ class DirectorPanelWindow(QWidget):
             self.lbl_video_feed.setStyleSheet(
                 "background-color: #09090b; color: #71717a; border: 1px solid #27272a; border-radius: 4px; font-size: 10px;"
             )
-            lay_vf.addWidget(self.lbl_video_feed)
+            lay_vf.addWidget(self.lbl_video_feed, 0, Qt.AlignmentFlag.AlignCenter)
             self.video_feed_window = win
 
         if not hasattr(self, "_lan_video_client"):
