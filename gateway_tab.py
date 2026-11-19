@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -47,12 +48,15 @@ class MultiPlatformGatewayTab(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         root_layout.addWidget(scroll)
 
         container = QWidget()
+        container.setMinimumWidth(0)
+        container.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(14, 14, 14, 14)
-        layout.setSpacing(12)
+        layout.setContentsMargins(12, 12, 18, 12)
+        layout.setSpacing(10)
         scroll.setWidget(container)
 
         # ------------------------------------------------------------------
@@ -68,9 +72,8 @@ class MultiPlatformGatewayTab(QWidget):
 
         top_row = QHBoxLayout()
         lbl_title = QLabel("🌐 <b>Multi-Platform Broadcast Gateway</b>")
-        lbl_title.setStyleSheet("font-size: 14px; border: none; background: transparent;")
-        top_row.addWidget(lbl_title)
-        top_row.addStretch()
+        lbl_title.setStyleSheet("font-size: 13px; border: none; background: transparent;")
+        top_row.addWidget(lbl_title, 1)
 
         self.lbl_active_dests = QLabel("Active: Twitch")
         self.lbl_active_dests.setStyleSheet(
@@ -88,7 +91,7 @@ class MultiPlatformGatewayTab(QWidget):
         lbl_sub.setStyleSheet("font-size: 11px; opacity: 0.85; border: none; background: transparent;")
         hdr_lay.addWidget(lbl_sub)
 
-        self.chk_dry_run = QCheckBox("🧪 Dry-Run / Simulation Mode (test multi-platform dispatching offline or without a Kick account)")
+        self.chk_dry_run = QCheckBox("🧪 Dry-Run / Simulation Mode (test offline or without Kick)")
         self.chk_dry_run.setChecked(self.gateway.dry_run_mode)
         self.chk_dry_run.setStyleSheet("font-size: 11px; font-weight: bold; border: none; background: transparent;")
         self.chk_dry_run.toggled.connect(self._on_config_changed)
@@ -100,36 +103,39 @@ class MultiPlatformGatewayTab(QWidget):
         # 2. Twitch Destination Card
         # ------------------------------------------------------------------
         grp_tw = QGroupBox("🟣 Twitch Destination")
-        lay_tw = QHBoxLayout(grp_tw)
-        lay_tw.setSpacing(10)
+        lay_tw = QVBoxLayout(grp_tw)
+        lay_tw.setSpacing(6)
 
-        self.chk_tw_enabled = QCheckBox("Include Twitch in Unified Dispatcher")
+        tw_row = QHBoxLayout()
+        self.chk_tw_enabled = QCheckBox("Include Twitch in Dispatcher")
         self.chk_tw_enabled.setChecked(self.gateway.twitch_enabled)
         self.chk_tw_enabled.toggled.connect(self._on_config_changed)
-        lay_tw.addWidget(self.chk_tw_enabled)
-
-        self.lbl_tw_status = QLabel()
-        self.lbl_tw_status.setStyleSheet("font-size: 11px;")
-        lay_tw.addWidget(self.lbl_tw_status, 1)
+        tw_row.addWidget(self.chk_tw_enabled)
+        tw_row.addStretch()
 
         btn_open_tw = QPushButton("Open Twitch Tab")
         btn_open_tw.clicked.connect(lambda: self.main_win.set_view_index(3) if hasattr(self.main_win, "set_view_index") else None)
-        lay_tw.addWidget(btn_open_tw)
+        tw_row.addWidget(btn_open_tw)
+        lay_tw.addLayout(tw_row)
+
+        self.lbl_tw_status = QLabel()
+        self.lbl_tw_status.setWordWrap(True)
+        self.lbl_tw_status.setStyleSheet("font-size: 11px;")
+        lay_tw.addWidget(self.lbl_tw_status)
         layout.addWidget(grp_tw)
 
         # ------------------------------------------------------------------
         # 3. YouTube Gaming / YouTube Live Card (13.1)
         # ------------------------------------------------------------------
-        grp_yt = QGroupBox("🔴 YouTube Gaming / YouTube Live (Google OAuth2 & Health Watchdog)")
+        grp_yt = QGroupBox("🔴 YouTube Gaming / YouTube Live (Google OAuth2 && Health Watchdog)")
         lay_yt = QVBoxLayout(grp_yt)
         lay_yt.setSpacing(8)
 
         yt_top = QHBoxLayout()
-        self.chk_yt_enabled = QCheckBox("Include YouTube Live in Unified Dispatcher")
+        self.chk_yt_enabled = QCheckBox("Include YouTube Live in Dispatcher")
         self.chk_yt_enabled.setChecked(self.gateway.youtube_enabled)
         self.chk_yt_enabled.toggled.connect(self._on_config_changed)
-        yt_top.addWidget(self.chk_yt_enabled)
-        yt_top.addStretch()
+        yt_top.addWidget(self.chk_yt_enabled, 1)
 
         self.lbl_yt_account = QLabel("Not linked")
         self.lbl_yt_account.setStyleSheet("font-size: 11px; font-weight: bold;")
@@ -137,71 +143,75 @@ class MultiPlatformGatewayTab(QWidget):
         lay_yt.addLayout(yt_top)
 
         yt_form = QFormLayout()
+        yt_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         yt_form.setSpacing(6)
         self.txt_yt_client_id = QLineEdit(self.gateway.yt_client_id)
-        self.txt_yt_client_id.setPlaceholderText("Google Cloud OAuth2 Desktop Client ID (e.g. 12345-abc.apps.googleusercontent.com)")
+        self.txt_yt_client_id.setMinimumWidth(0)
+        self.txt_yt_client_id.setPlaceholderText("Google OAuth2 Desktop Client ID")
         self.txt_yt_client_id.editingFinished.connect(self._on_config_changed)
         yt_form.addRow("Google Client ID:", self.txt_yt_client_id)
 
         self.txt_yt_client_secret = QLineEdit(self.gateway.yt_client_secret)
+        self.txt_yt_client_secret.setMinimumWidth(0)
         self.txt_yt_client_secret.setEchoMode(QLineEdit.EchoMode.Password)
-        self.txt_yt_client_secret.setPlaceholderText("Optional Client Secret (required if Google OAuth app is Web/Desktop with secret)")
+        self.txt_yt_client_secret.setPlaceholderText("Optional Client Secret")
         self.txt_yt_client_secret.editingFinished.connect(self._on_config_changed)
-        yt_form.addRow("Google Client Secret:", self.txt_yt_client_secret)
+        yt_form.addRow("Client Secret:", self.txt_yt_client_secret)
         lay_yt.addLayout(yt_form)
 
-        yt_btns = QHBoxLayout()
-        self.btn_yt_login = QPushButton("🔑 Sign In with Google (YouTube)")
+        yt_btns_1 = QHBoxLayout()
+        self.btn_yt_login = QPushButton("🔑 Sign In with Google")
         self.btn_yt_login.setStyleSheet("background-color: #dc2626; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;")
         self.btn_yt_login.clicked.connect(self._start_youtube_oauth)
-        yt_btns.addWidget(self.btn_yt_login)
+        yt_btns_1.addWidget(self.btn_yt_login)
 
         self.btn_yt_unlink = QPushButton("Disconnect")
         self.btn_yt_unlink.clicked.connect(self._unlink_youtube)
-        yt_btns.addWidget(self.btn_yt_unlink)
+        yt_btns_1.addWidget(self.btn_yt_unlink)
 
-        self.btn_yt_health = QPushButton("🔄 Check Live Health")
+        self.btn_yt_health = QPushButton("🔄 Check Health")
         self.btn_yt_health.clicked.connect(self._check_yt_health_clicked)
-        yt_btns.addWidget(self.btn_yt_health)
+        yt_btns_1.addWidget(self.btn_yt_health)
 
-        btn_yt_markers = QPushButton("📄 Open VOD Markers")
+        btn_yt_markers = QPushButton("📄 VOD Markers")
         btn_yt_markers.setToolTip("Open local YouTube VOD timestamp chapter markers log.")
         btn_yt_markers.clicked.connect(self._open_yt_markers_file)
-        yt_btns.addWidget(btn_yt_markers)
-        yt_btns.addStretch()
-        lay_yt.addLayout(yt_btns)
+        yt_btns_1.addWidget(btn_yt_markers)
+        yt_btns_1.addStretch()
+        lay_yt.addLayout(yt_btns_1)
 
         yt_opts = QHBoxLayout()
-        self.chk_yt_watchdog = QCheckBox("20s Stream Health Watchdog")
+        self.chk_yt_watchdog = QCheckBox("20s Health Watchdog")
         self.chk_yt_watchdog.setChecked(self.gateway.yt_watchdog_enabled)
         self.chk_yt_watchdog.toggled.connect(self._on_config_changed)
         yt_opts.addWidget(self.chk_yt_watchdog)
 
-        self.chk_yt_chat_marker = QCheckBox("Post Markers to YouTube Live Chat")
+        self.chk_yt_chat_marker = QCheckBox("Post Markers to Live Chat")
         self.chk_yt_chat_marker.setChecked(self.gateway.yt_post_marker_to_chat)
         self.chk_yt_chat_marker.toggled.connect(self._on_config_changed)
         yt_opts.addWidget(self.chk_yt_chat_marker)
+        yt_opts.addStretch()
+        lay_yt.addLayout(yt_opts)
 
         self.lbl_yt_health = QLabel("Health: Idle")
+        self.lbl_yt_health.setWordWrap(True)
         self.lbl_yt_health.setStyleSheet("font-size: 11px;")
-        yt_opts.addWidget(self.lbl_yt_health, 1)
-        lay_yt.addLayout(yt_opts)
+        lay_yt.addWidget(self.lbl_yt_health)
 
         layout.addWidget(grp_yt)
 
         # ------------------------------------------------------------------
         # 4. Kick Streaming Target Card (13.2)
         # ------------------------------------------------------------------
-        grp_kick = QGroupBox("🟢 Kick Streaming Target (Metadata Sync, OAuth2 & Webhook Bridge)")
+        grp_kick = QGroupBox("🟢 Kick Streaming Target (Metadata Sync, OAuth2 && Webhook Bridge)")
         lay_kick = QVBoxLayout(grp_kick)
         lay_kick.setSpacing(8)
 
         k_top = QHBoxLayout()
-        self.chk_kick_enabled = QCheckBox("Include Kick in Unified Dispatcher")
+        self.chk_kick_enabled = QCheckBox("Include Kick in Dispatcher")
         self.chk_kick_enabled.setChecked(self.gateway.kick_enabled)
         self.chk_kick_enabled.toggled.connect(self._on_config_changed)
-        k_top.addWidget(self.chk_kick_enabled)
-        k_top.addStretch()
+        k_top.addWidget(self.chk_kick_enabled, 1)
 
         self.lbl_kick_status = QLabel("Status: Not synced")
         self.lbl_kick_status.setStyleSheet("font-size: 11px; font-weight: bold;")
@@ -209,34 +219,40 @@ class MultiPlatformGatewayTab(QWidget):
         lay_kick.addLayout(k_top)
 
         k_form = QFormLayout()
+        k_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         k_form.setSpacing(6)
 
         slug_row = QHBoxLayout()
         self.txt_kick_slug = QLineEdit(self.gateway.kick_channel_slug)
-        self.txt_kick_slug.setPlaceholderText("e.g. xqc (public channel lookup works without a Kick account)")
+        self.txt_kick_slug.setMinimumWidth(0)
+        self.txt_kick_slug.setPlaceholderText("e.g. xqc (no Kick account needed)")
         self.txt_kick_slug.editingFinished.connect(self._on_config_changed)
         slug_row.addWidget(self.txt_kick_slug, 1)
 
-        self.btn_kick_sync = QPushButton("🔍 Sync Public Metadata")
+        self.btn_kick_sync = QPushButton("🔍 Sync Public")
+        self.btn_kick_sync.setToolTip("Fetch public Kick channel metadata without signing in.")
         self.btn_kick_sync.clicked.connect(self._sync_kick_public)
         slug_row.addWidget(self.btn_kick_sync)
-        k_form.addRow("Kick Channel Slug:", slug_row)
+        k_form.addRow("Channel Slug:", slug_row)
 
         self.txt_kick_webhook = QLineEdit(self.gateway.kick_webhook_url)
-        self.txt_kick_webhook.setPlaceholderText("Optional Webhook Bridge URL (Botrix / Kicklet / n8n / custom relay)")
+        self.txt_kick_webhook.setMinimumWidth(0)
+        self.txt_kick_webhook.setPlaceholderText("Optional Webhook Bridge URL (Botrix / Kicklet / n8n)")
         self.txt_kick_webhook.editingFinished.connect(self._on_config_changed)
-        k_form.addRow("Webhook Bridge URL:", self.txt_kick_webhook)
+        k_form.addRow("Webhook URL:", self.txt_kick_webhook)
 
         self.txt_kick_client_id = QLineEdit(self.gateway.kick_client_id)
-        self.txt_kick_client_id.setPlaceholderText("Optional Kick Developer OAuth2 Client ID")
+        self.txt_kick_client_id.setMinimumWidth(0)
+        self.txt_kick_client_id.setPlaceholderText("Optional Kick OAuth2 Client ID")
         self.txt_kick_client_id.editingFinished.connect(self._on_config_changed)
         k_form.addRow("Kick Client ID:", self.txt_kick_client_id)
 
         self.txt_kick_token = QLineEdit(self.gateway.kick_access_token)
+        self.txt_kick_token.setMinimumWidth(0)
         self.txt_kick_token.setEchoMode(QLineEdit.EchoMode.Password)
-        self.txt_kick_token.setPlaceholderText("Kick Bearer Token (auto-filled by OAuth or paste manually)")
+        self.txt_kick_token.setPlaceholderText("Kick Bearer Token (auto-filled or paste)")
         self.txt_kick_token.editingFinished.connect(self._on_config_changed)
-        k_form.addRow("Kick Access Token:", self.txt_kick_token)
+        k_form.addRow("Access Token:", self.txt_kick_token)
         lay_kick.addLayout(k_form)
 
         k_btns = QHBoxLayout()
@@ -261,40 +277,45 @@ class MultiPlatformGatewayTab(QWidget):
         lay_disp.setSpacing(8)
 
         meta_form = QFormLayout()
+        meta_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         meta_form.setSpacing(6)
         self.txt_meta_title = QLineEdit()
+        self.txt_meta_title.setMinimumWidth(0)
         self.txt_meta_title.setPlaceholderText("Stream Title to push to all active destinations...")
         meta_form.addRow("Broadcast Title:", self.txt_meta_title)
 
-        cat_row = QHBoxLayout()
         self.txt_meta_category = QLineEdit()
-        self.txt_meta_category.setPlaceholderText("Game / Category (e.g. Just Chatting, Minecraft, Valorant)")
-        cat_row.addWidget(self.txt_meta_category, 1)
-
-        self.btn_sync_meta = QPushButton("🚀 Sync Title & Category to All Active")
-        self.btn_sync_meta.setStyleSheet("background-color: #6d28d9; color: white; font-weight: bold; padding: 5px 12px; border-radius: 4px;")
-        self.btn_sync_meta.clicked.connect(self._on_sync_metadata)
-        cat_row.addWidget(self.btn_sync_meta)
-        meta_form.addRow("Game / Category:", cat_row)
+        self.txt_meta_category.setMinimumWidth(0)
+        self.txt_meta_category.setPlaceholderText("Game / Category (e.g. Just Chatting, Minecraft)")
+        meta_form.addRow("Game / Category:", self.txt_meta_category)
         lay_disp.addLayout(meta_form)
 
-        act_row = QHBoxLayout()
+        self.btn_sync_meta = QPushButton("🚀 Sync Title && Category to All Active Platforms")
+        self.btn_sync_meta.setStyleSheet("background-color: #6d28d9; color: white; font-weight: bold; padding: 6px 12px; border-radius: 4px;")
+        self.btn_sync_meta.clicked.connect(self._on_sync_metadata)
+        lay_disp.addWidget(self.btn_sync_meta)
+
+        marker_row = QHBoxLayout()
         self.txt_test_marker = QLineEdit()
+        self.txt_test_marker.setMinimumWidth(0)
         self.txt_test_marker.setPlaceholderText("Marker description (e.g. Epic Clutch!)")
-        act_row.addWidget(self.txt_test_marker, 1)
+        marker_row.addWidget(self.txt_test_marker, 1)
 
         self.btn_drop_marker = QPushButton("📍 Drop Unified Marker")
         self.btn_drop_marker.clicked.connect(self._on_drop_marker)
-        act_row.addWidget(self.btn_drop_marker)
+        marker_row.addWidget(self.btn_drop_marker)
+        lay_disp.addLayout(marker_row)
 
+        ann_row = QHBoxLayout()
         self.txt_test_announce = QLineEdit()
+        self.txt_test_announce.setMinimumWidth(0)
         self.txt_test_announce.setPlaceholderText("Chat announcement message...")
-        act_row.addWidget(self.txt_test_announce, 1)
+        ann_row.addWidget(self.txt_test_announce, 1)
 
-        self.btn_send_announce = QPushButton("📣 Announce")
+        self.btn_send_announce = QPushButton("📣 Announce to All")
         self.btn_send_announce.clicked.connect(self._on_send_announce)
-        act_row.addWidget(self.btn_send_announce)
-        lay_disp.addLayout(act_row)
+        ann_row.addWidget(self.btn_send_announce)
+        lay_disp.addLayout(ann_row)
 
         self.txt_dispatch_log = QTextEdit()
         self.txt_dispatch_log.setReadOnly(True)
@@ -369,7 +390,7 @@ class MultiPlatformGatewayTab(QWidget):
             QMessageBox.warning(self, "Google Client ID Needed", "Enter your Google Cloud OAuth2 Desktop Client ID first.")
             return
         self.btn_yt_login.setEnabled(False)
-        self.btn_yt_login.setText("Authorizing in browser...")
+        self.btn_yt_login.setText("Authorizing...")
         self._yt_oauth_worker = YouTubeOAuthWorker(cid, csec)
         self._yt_oauth_worker.auth_success.connect(self._on_yt_auth_success)
         self._yt_oauth_worker.auth_error.connect(self._on_yt_auth_error)
@@ -377,7 +398,7 @@ class MultiPlatformGatewayTab(QWidget):
 
     def _on_yt_auth_success(self, data: dict):
         self.btn_yt_login.setEnabled(True)
-        self.btn_yt_login.setText("🔑 Sign In with Google (YouTube)")
+        self.btn_yt_login.setText("🔑 Sign In with Google")
         self.gateway.yt_access_token = data.get("access_token", "")
         self.gateway.yt_refresh_token = data.get("refresh_token", "") or self.gateway.yt_refresh_token
         self.gateway.yt_token_expires_at = float(data.get("expires_at", 0.0))
@@ -388,7 +409,7 @@ class MultiPlatformGatewayTab(QWidget):
 
     def _on_yt_auth_error(self, err: str):
         self.btn_yt_login.setEnabled(True)
-        self.btn_yt_login.setText("🔑 Sign In with Google (YouTube)")
+        self.btn_yt_login.setText("🔑 Sign In with Google")
         QMessageBox.warning(self, "YouTube Auth Error", err)
 
     def _unlink_youtube(self):
@@ -438,7 +459,7 @@ class MultiPlatformGatewayTab(QWidget):
             )
             return
         self.btn_kick_login.setEnabled(False)
-        self.btn_kick_login.setText("Authorizing Kick...")
+        self.btn_kick_login.setText("Authorizing...")
         self._kick_oauth_worker = KickOAuthWorker(cid)
         self._kick_oauth_worker.auth_success.connect(self._on_kick_auth_success)
         self._kick_oauth_worker.auth_error.connect(self._on_kick_auth_error)
