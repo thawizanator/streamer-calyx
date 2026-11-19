@@ -1795,7 +1795,12 @@ class DirectorPanelWindow(QWidget):
         self._lan_video_host = (host or "127.0.0.1").strip()
 
     def _on_lan_video_conn_changed(self, connected: bool):
-        if hasattr(self, "lbl_video_feed") and not connected:
+        if not hasattr(self, "lbl_video_feed"):
+            return
+        if connected:
+            if self.lbl_video_feed.pixmap() is None or self.lbl_video_feed.pixmap().isNull():
+                self.lbl_video_feed.setText("Connected — waiting for video frames...\n(If using Virtual Cam, start it in SLOBS or choose Auto)")
+        else:
             self.lbl_video_feed.setPixmap(QPixmap())
             self.lbl_video_feed.setText("LAN Video Feed Offline\n(Enable in Director Settings)")
 
