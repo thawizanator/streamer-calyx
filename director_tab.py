@@ -3513,7 +3513,9 @@ class DirectorTab(QWidget):
             self.soundboard_lan_client = None
         if getattr(self, "lan_video_server", None):
             try:
-                self.lan_video_server.stop()
+                from PyQt6 import sip
+                if not sip.isdeleted(self.lan_video_server):
+                    self.lan_video_server.stop()
             except Exception:
                 pass
             self.lan_video_server = None

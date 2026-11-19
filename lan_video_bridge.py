@@ -162,17 +162,28 @@ class LANVideoServer(QObject):
 
     def stop(self):
         self.enabled = False
-        self._capture_timer.stop()
+        try:
+            if hasattr(self, "_capture_timer") and self._capture_timer:
+                self._capture_timer.stop()
+        except RuntimeError:
+            pass
         self._teardown_virtual_cam()
-        for c in list(self._clients):
+        for c in list(getattr(self, "_clients", [])):
             try:
                 c.close()
             except Exception:
                 pass
-        self._clients.clear()
-        if self._server.isListening():
-            self._server.close()
-        self.client_count_changed.emit(0)
+        if hasattr(self, "_clients"):
+            self._clients.clear()
+        try:
+            if hasattr(self, "_server") and self._server and self._server.isListening():
+                self._server.close()
+        except RuntimeError:
+            pass
+        try:
+            self.client_count_changed.emit(0)
+        except RuntimeError:
+            pass
         log_debug("LAN_VIDEO", "LAN Video Server stopped.")
 
     def _on_new_connection(self):
