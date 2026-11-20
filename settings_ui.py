@@ -35,6 +35,8 @@ from logs_tab import LogsTab
 from audio_tab import AudioTab
 from gateway_tab import MultiPlatformGatewayTab
 from platform_gateway import MultiPlatformGateway
+from plugins_tab import PluginsTab
+from plugin_engine import PluginManager
 from setup_wizard import SetupWizardDialog
 from context_help import ContextHelpFilter
 
@@ -1797,7 +1799,8 @@ PAGE_TITLES = {
     12: "📑  Logs & Diagnostics Suite",
     13: "🌸  About Streamer Calyx",
     14: "🎧  Audio Devices & Routing",
-    15: "🌐  Multi-Platform Broadcast Gateway"
+    15: "🌐  Multi-Platform Broadcast Gateway",
+    16: "🧩  Plugins & Add-ons"
 }
 
 SIDEBAR_CATEGORIES = [
@@ -1820,9 +1823,11 @@ SIDEBAR_CATEGORIES = [
         (6, "📜  Rotating Text", "btn_nav_trivia"),
         (7, "🎬  Stream Director", "btn_nav_director"),
     ]),
+    ("plugins", "PLUGINS", []),
     ("system", "SYSTEM & SETTINGS", [
         (1, "🖥️  Monitor Setup", "btn_nav_monitor"),
         (8, "🎮  Hotkeys && Peripherals", "btn_nav_hotkeys"),
+        (16, "🧩  Plugins && Add-ons", "btn_nav_plugins"),
         (4, "⚙️  System", "btn_nav_system"),
         (12, "📑  Logs", "btn_nav_logs"),
         (13, "🌸  About", "btn_nav_about"),
@@ -2079,6 +2084,17 @@ class SettingsWindow(QWidget):
         self.tab_gateway = MultiPlatformGatewayTab(self, gw)
         self.stacked_pages.addWidget(self.tab_gateway)           # 15
 
+        # Initialize Modular Plugin Architecture & Add-ons Tab (Phase 14, idx 16)
+        self._dynamic_plugins = {}      # plugin_id -> {page_idx, widget, btn}
+        self._dynamic_page_titles = {}  # page_idx -> title
+        self.setAcceptDrops(True)
+        pm = getattr(self.overlay, "plugin_manager", None)
+        if pm is None:
+            pm = PluginManager(overlay=self.overlay, parent=self)
+        self.plugin_manager = pm
+        self.tab_plugins = PluginsTab(self, pm)
+        self.stacked_pages.addWidget(self.tab_plugins)           # 16
+
         content_layout.addWidget(self.stacked_pages)
 
 
@@ -2109,6 +2125,12 @@ class SettingsWindow(QWidget):
         self.shortcut_sidebar = QShortcut(QKeySequence("Ctrl+B"), self)
         self.shortcut_sidebar.activated.connect(self.toggle_sidebar)
         self._apply_sidebar_state()
+
+        # Mount enabled core & 3rd-party plugins into sidebar + QStackedWidget
+        if hasattr(self, "plugin_manager") and self.plugin_manager:
+            self.plugin_manager.attach_settings_window(self)
+            if hasattr(self, "tab_plugins"):
+                self.tab_plugins.refresh_list()
 
         # Apply initial theme
         self.refresh_theme()
@@ -2293,7 +2315,7 @@ class SettingsWindow(QWidget):
             btn = self.nav_button_group.button(idx)
             if btn:
                 btn.setChecked(True)
-            title = PAGE_TITLES.get(idx, "Streamer Calyx")
+            title = self._dynamic_page_titles.get(idx, PAGE_TITLES.get(idx, "Streamer Calyx"))
             self.lbl_page_title.setText(title)
             if idx == 8 and hasattr(self, "tab_hotkeys"):
                 self.tab_hotkeys.populate_table()
@@ -2444,6 +2466,96 @@ class SettingsWindow(QWidget):
     def show_about_dialog(self):
         # Switch directly to the System tab where About is prominently displayed
         self.tabs.setCurrentIndex(4)
+
+    # ------------------------------------------------------------------
+    # Phase 14.3 Dynamic Sidebar & QStackedWidget Plugin Injection
+    # ------------------------------------------------------------------
+    def _resolve_plugin_cat_id(self, category_label: str) -> str:
+        cat_upper = str(category_label or "").upper()
+        if "STREAM" in cat_upper and "TOOL" in cat_upper:
+            return "tools"
+        if "OVERLAY" in cat_upper:
+            return "overlay"
+        return "plugins"
+
+    def register_plugin_page(self, plugin_id: str, title: str, nav_label: str, category_label: str, widget: QWidget) -> int:
+        if plugin_id in self._dynamic_plugins:
+            return self._dynamic_plugins[plugin_id]["page_idx"]
+
+        page_idx = self.stacked_pages.addWidget(widget)
+        self._dynamic_page_titles[page_idx] = title
+
+        cat_id = self._resolve_plugin_cat_id(category_label)
+        cat_box = self._cat_containers.get(cat_id) or self._cat_containers.get("plugins")
+        btn = self._create_nav_btn(nav_label, page_idx)
+        if cat_box and cat_box.layout():
+            cat_box.layout().addWidget(btn)
+
+        if hasattr(self, "combo_collapsed_nav") and self.combo_collapsed_nav:
+            self.combo_collapsed_nav.addItem(f"   {title}", page_idx)
+
+        self._dynamic_plugins[plugin_id] = {
+            "page_idx": page_idx,
+            "widget": widget,
+            "btn": btn,
+            "cat_id": cat_id,
+        }
+        return page_idx
+
+    def unregister_plugin_page(self, plugin_id: str):
+        info = self._dynamic_plugins.pop(plugin_id, None)
+        if not info:
+            return
+        page_idx = info["page_idx"]
+        self._dynamic_page_titles.pop(page_idx, None)
+
+        btn = info.get("btn")
+        if btn:
+            try:
+                self.nav_button_group.removeButton(btn)
+                btn.setParent(None)
+                btn.deleteLater()
+            except Exception:
+                pass
+
+        if hasattr(self, "combo_collapsed_nav") and self.combo_collapsed_nav:
+            c_idx = self.combo_collapsed_nav.findData(page_idx)
+            if c_idx >= 0:
+                self.combo_collapsed_nav.removeItem(c_idx)
+
+        widget = info.get("widget")
+        if widget:
+            try:
+                if self.stacked_pages.currentWidget() is widget:
+                    self.set_view_index(16)
+                self.stacked_pages.removeWidget(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+            except Exception:
+                pass
+
+    def focus_plugin_page(self, plugin_id: str):
+        info = self._dynamic_plugins.get(plugin_id)
+        if info:
+            self.set_view_index(info["page_idx"])
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                if url.toLocalFile().lower().endswith(".calyxplugin"):
+                    event.acceptProposedAction()
+                    return
+        super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                path = url.toLocalFile()
+                if path.lower().endswith(".calyxplugin") and hasattr(self, "tab_plugins"):
+                    self.set_view_index(16)
+                    self.tab_plugins.install_archive_with_review(path)
+                    return
+        super().dropEvent(event)
 
 
 # ==============================================================================

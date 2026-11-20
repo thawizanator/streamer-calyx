@@ -529,6 +529,8 @@ class RedBorderOverlay(QMainWindow):
         self.deorbit_engine = DeOrbitSequenceEngine(overlay=self, slobs_client=slobs_cli, ifttt_engine=self.ifttt_engine, parent=self)
         from platform_gateway import MultiPlatformGateway
         self.platform_gateway = MultiPlatformGateway(overlay=self, parent=self)
+        from plugin_engine import PluginManager
+        self.plugin_manager = PluginManager(overlay=self, parent=self)
         if slobs_cli:
             slobs_cli.scene_switched.connect(lambda _id, name: self.ifttt_engine.fire_trigger("scene_switched", name))
             if hasattr(slobs_cli, "streaming_status_changed"):
@@ -1249,9 +1251,11 @@ class RedBorderOverlay(QMainWindow):
         if getattr(self, "content_creator_mode", False) and hasattr(self, "moments_logger") and self.moments_logger:
             self.moments_logger.log_moment(description=f"{icon} {label} ({desc})", source="Auto-Clip")
 
-        # 3c. Fire IFTTT rules for autoclip_peak
+        # 3c. Fire IFTTT rules & Plugin event listeners for autoclip_peak / marker_created
         if hasattr(self, "ifttt_engine") and self.ifttt_engine:
             self.ifttt_engine.fire_trigger("autoclip_peak", label)
+        if hasattr(self, "plugin_manager") and self.plugin_manager:
+            self.plugin_manager.dispatch_event("marker_created", {"description": desc, "label": label})
 
         # 4. Display In-Game HUD Toast notification
         ts_str = payload.get("timestamp_str", "")
