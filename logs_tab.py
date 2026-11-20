@@ -50,30 +50,33 @@ class LogsTab(QWidget):
         row_sel.addWidget(lbl_sel)
 
         self.combo_logs = QComboBox()
-        self.combo_logs.setMinimumWidth(200)
+        self.combo_logs.setMinimumWidth(0)
         self.combo_logs.setToolTip("Daily log files stored locally in %APPDATA%\\StreamerCalyx\\logs")
         self.combo_logs.currentIndexChanged.connect(self._on_log_file_selected)
         row_sel.addWidget(self.combo_logs, 1)
+        lay_ctrl.addLayout(row_sel)
 
+        row_sel2 = QHBoxLayout()
+        row_sel2.setSpacing(8)
         self.btn_refresh = QPushButton("🔄 Refresh")
         self.btn_refresh.setToolTip("Reload the log file contents and scan for new log entries.")
         self.btn_refresh.setStyleSheet("background-color: #27272a; color: #efeff1; border: 1px solid #3f3f46; padding: 4px 10px; border-radius: 4px; font-size: 11px;")
         self.btn_refresh.clicked.connect(self.load_selected_log)
-        row_sel.addWidget(self.btn_refresh)
+        row_sel2.addWidget(self.btn_refresh)
 
         self.btn_copy = QPushButton("📋 Copy Log")
         self.btn_copy.setToolTip("Copy displayed log contents to clipboard.")
         self.btn_copy.setStyleSheet("background-color: #27272a; color: #efeff1; border: 1px solid #3f3f46; padding: 4px 10px; border-radius: 4px; font-size: 11px;")
         self.btn_copy.clicked.connect(self._copy_to_clipboard)
-        row_sel.addWidget(self.btn_copy)
+        row_sel2.addWidget(self.btn_copy)
 
         self.chk_autoscroll = QCheckBox("Auto-scroll to bottom")
         self.chk_autoscroll.setChecked(True)
         self.chk_autoscroll.setStyleSheet("font-size: 11px; color: #adadb8;")
         self.chk_autoscroll.setToolTip("Automatically jump to the latest log entries when refreshed.")
-        row_sel.addWidget(self.chk_autoscroll)
-
-        lay_ctrl.addLayout(row_sel)
+        row_sel2.addWidget(self.chk_autoscroll)
+        row_sel2.addStretch()
+        lay_ctrl.addLayout(row_sel2)
         layout.addWidget(ctrl_card)
 
         # ------------------ LOG VIEWER PANE ------------------

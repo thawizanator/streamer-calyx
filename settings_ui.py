@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QL
                              QComboBox, QPushButton, QSlider, QColorDialog, 
                              QMessageBox, QLineEdit, QTabWidget, QCheckBox, 
                              QGroupBox, QProgressBar, QDialog, QButtonGroup, 
-                             QStackedWidget, QFrame, QScrollArea)
+                             QStackedWidget, QFrame, QScrollArea, QSizePolicy)
 from PyQt6.QtGui import QIcon, QPixmap, QPainter, QColor, QPen, QKeySequence, QShortcut, QGuiApplication
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -283,10 +283,12 @@ class MainTab(QWidget):
         root_lay.addWidget(scroll)
 
         container = QWidget()
+        container.setMinimumWidth(0)
+        container.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         scroll.setWidget(container)
         layout = QVBoxLayout(container)
         layout.setSpacing(10)
-        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setContentsMargins(12, 10, 18, 10)
 
         # Group 1: Display & Overlay Mode
         grp_mode = QGroupBox("Display && Overlay Mode")
@@ -366,17 +368,19 @@ class MainTab(QWidget):
         self.btn_drop_moment.setToolTip("Manually log a timestamped moment bookmark right now.")
         self.btn_drop_moment.clicked.connect(self._on_drop_moment_now)
         row_mom_btns.addWidget(self.btn_drop_moment)
+        lay_moments.addLayout(row_mom_btns)
 
+        row_mom_btns2 = QHBoxLayout()
         self.btn_open_moments = QPushButton("📂 Open Moments Log")
         self.btn_open_moments.setToolTip("Open recording_moments.txt in your default text editor.")
         self.btn_open_moments.clicked.connect(self._on_open_moments_log)
-        row_mom_btns.addWidget(self.btn_open_moments)
+        row_mom_btns2.addWidget(self.btn_open_moments)
 
         self.btn_reset_moments_clock = QPushButton("⏱️ Reset Clock")
         self.btn_reset_moments_clock.setToolTip("Reset the recording session elapsed timer (T+00:00:00) for a new video.")
         self.btn_reset_moments_clock.clicked.connect(self._on_reset_moments_clock)
-        row_mom_btns.addWidget(self.btn_reset_moments_clock)
-        lay_moments.addLayout(row_mom_btns)
+        row_mom_btns2.addWidget(self.btn_reset_moments_clock)
+        lay_moments.addLayout(row_mom_btns2)
 
         layout.addWidget(grp_moments)
 
@@ -1201,9 +1205,23 @@ class SystemTab(QWidget):
         self.latest_download_url = None
         self.latest_release_url = None
 
-        layout = QVBoxLayout(self)
+        root_lay = QVBoxLayout(self)
+        root_lay.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        root_lay.addWidget(scroll)
+
+        container = QWidget()
+        container.setMinimumWidth(0)
+        container.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        scroll.setWidget(container)
+
+        layout = QVBoxLayout(container)
         layout.setSpacing(6)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(12, 8, 18, 8)
 
         # Group 1: Software Updates
         grp_upd = QGroupBox("Application Updates")
@@ -1275,9 +1293,9 @@ class SystemTab(QWidget):
         chan_row.setSpacing(10)
         chan_row.addWidget(QLabel("Update Channel:"))
         self.combo_channel = QComboBox()
-        self.combo_channel.setToolTip("Select update release channel: Stable (milestones) or Beta (v3.0 early access).")
+        self.combo_channel.setToolTip("Select update release channel: Stable (milestones) or Beta (v4.0 early access).")
         self.combo_channel.addItem("Stable (Recommended)", "stable")
-        self.combo_channel.addItem("Beta / Early Access (v3.0 Preview)", "beta")
+        self.combo_channel.addItem("Beta / Early Access (v4.0 Preview)", "beta")
         cur_chan = getattr(self.main_win.overlay, "update_channel", "stable")
         idx_chan = self.combo_channel.findData(cur_chan)
         if idx_chan >= 0:
@@ -2151,6 +2169,7 @@ class SettingsWindow(QWidget):
             self.plugin_manager.attach_settings_window(self)
             if hasattr(self, "tab_plugins"):
                 self.tab_plugins.refresh_list()
+        self._rebuild_collapsed_nav_combo()
 
         # Apply initial theme
         self.refresh_theme()
@@ -2529,16 +2548,44 @@ class SettingsWindow(QWidget):
         if cat_box and cat_box.layout():
             cat_box.layout().addWidget(btn)
 
-        if hasattr(self, "combo_collapsed_nav") and self.combo_collapsed_nav:
-            self.combo_collapsed_nav.addItem(f"   {title}", page_idx)
-
         self._dynamic_plugins[plugin_id] = {
             "page_idx": page_idx,
             "widget": wrapper,
             "btn": btn,
             "cat_id": cat_id,
+            "title": title,
         }
+        self._rebuild_collapsed_nav_combo()
         return page_idx
+
+    def _rebuild_collapsed_nav_combo(self):
+        if not hasattr(self, "combo_collapsed_nav") or not self.combo_collapsed_nav:
+            return
+        cur_idx = self.stacked_pages.currentIndex() if hasattr(self, "stacked_pages") else 0
+        self.combo_collapsed_nav.blockSignals(True)
+        self.combo_collapsed_nav.clear()
+        nav_model = self.combo_collapsed_nav.model()
+        dyn_by_cat = {}
+        for pinfo in getattr(self, "_dynamic_plugins", {}).values():
+            dyn_by_cat.setdefault(pinfo.get("cat_id", "plugins"), []).append(pinfo)
+
+        for cat_id, cat_label, items in SIDEBAR_CATEGORIES:
+            self.combo_collapsed_nav.addItem(f"── {cat_label} ──", None)
+            hdr_row_idx = self.combo_collapsed_nav.count() - 1
+            if hasattr(nav_model, "item"):
+                hdr_item = nav_model.item(hdr_row_idx)
+                if hdr_item:
+                    hdr_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            for p_idx, _, _ in items:
+                if p_idx in PAGE_TITLES:
+                    self.combo_collapsed_nav.addItem(f"   {PAGE_TITLES[p_idx]}", p_idx)
+            for pinfo in dyn_by_cat.get(cat_id, []):
+                self.combo_collapsed_nav.addItem(f"   {pinfo.get('title', '')}", pinfo["page_idx"])
+
+        sel = self.combo_collapsed_nav.findData(cur_idx)
+        if sel >= 0:
+            self.combo_collapsed_nav.setCurrentIndex(sel)
+        self.combo_collapsed_nav.blockSignals(False)
 
     def unregister_plugin_page(self, plugin_id: str):
         info = self._dynamic_plugins.pop(plugin_id, None)
@@ -2557,9 +2604,7 @@ class SettingsWindow(QWidget):
                 pass
 
         if hasattr(self, "combo_collapsed_nav") and self.combo_collapsed_nav:
-            c_idx = self.combo_collapsed_nav.findData(page_idx)
-            if c_idx >= 0:
-                self.combo_collapsed_nav.removeItem(c_idx)
+            self._rebuild_collapsed_nav_combo()
 
         widget = info.get("widget")
         if widget:
