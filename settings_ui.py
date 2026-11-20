@@ -1426,7 +1426,7 @@ class SystemTab(QWidget):
             return
         if chan == "beta":
             self.lbl_channel_note.setText(
-                "<span style='color: #eab308; font-size: 11px;'>● Preview builds & v3.0 features</span>"
+                "<span style='color: #eab308; font-size: 11px;'>● Preview builds && v4.0 beta features</span>"
             )
         else:
             self.lbl_channel_note.setText(
@@ -2252,6 +2252,8 @@ class SettingsWindow(QWidget):
         self.lbl_v.setText(f"{v_link} <span style='color: {tert};'>• ThaWizanator</span>")
         if chan == "beta":
             self.lbl_channel_badge.setText("<span style='color: #eab308; font-size: 11px;'>● Beta Channel</span>")
+        elif is_beta_build():
+            self.lbl_channel_badge.setText("<span style='color: #22c55e; font-size: 11px;'>● Stable Channel</span> <span style='color: #eab308; font-size: 10px;'>(Beta Build)</span>")
         else:
             self.lbl_channel_badge.setText("<span style='color: #22c55e; font-size: 11px;'>● Stable Channel</span>")
 

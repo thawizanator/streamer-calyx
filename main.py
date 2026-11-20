@@ -651,7 +651,9 @@ class RedBorderOverlay(QMainWindow):
         self.debug_mode = False
         self.check_updates_on_startup = True
         self.auto_update_enabled = False
-        self.update_channel = "stable"
+        from debug_logger import is_beta_build as _is_beta_build
+        default_chan = "beta" if _is_beta_build() else "stable"
+        self.update_channel = default_chan
         self.theme_preference = "system"
         self.sidebar_collapsed = False
         self.collapsed_categories = []
@@ -696,7 +698,7 @@ class RedBorderOverlay(QMainWindow):
                     self.debug_mode = d.get("debug_mode", False)
                     self.check_updates_on_startup = d.get("check_updates_on_startup", True)
                     self.auto_update_enabled = d.get("auto_update_enabled", False)
-                    self.update_channel = d.get("update_channel", "stable")
+                    self.update_channel = d.get("update_channel", default_chan)
                     self.theme_preference = d.get("theme_preference", "system")
                     self.sidebar_collapsed = d.get("sidebar_collapsed", False)
                     self.collapsed_categories = d.get("collapsed_categories", [])
