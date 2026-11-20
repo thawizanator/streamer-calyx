@@ -183,7 +183,8 @@ class BouncerValidator:
         action = action.upper().strip()
         allowed_actions = {
             "SWITCH_SCENE", "TOGGLE_MUTE", "SET_VOLUME", "REQUEST_STATE",
-            "PING", "SET_VISIBILITY", "PLAY_SOUND", "STOP_ALL", "TOGGLE_RECORDING"
+            "PING", "SET_VISIBILITY", "PLAY_SOUND", "STOP_ALL", "TOGGLE_RECORDING",
+            "PEER_CHAT"
         }
         if action not in allowed_actions:
             log_debug("BOUNCER", f"Unauthorized action rejected: '{action}' from {peer_id}")
@@ -192,6 +193,14 @@ class BouncerValidator:
         # REQUEST_STATE, PING, and STOP_ALL require no target
         if action in {"REQUEST_STATE", "PING", "STOP_ALL"}:
             return True, "Valid", {"action": action}
+
+        if action == "PEER_CHAT":
+            packet = str(payload.get("packet", ""))[:4096]
+            username = self._peer_usernames.get(peer_id, "")
+            sender = str(payload.get("sender") or username or peer_id)[:64]
+            if not packet:
+                return False, "Empty peer chat packet", None
+            return True, "Valid", {"action": action, "packet": packet, "sender": sender}
 
         # TOGGLE_RECORDING requires explicit allow_recording_control or full_control
         if action == "TOGGLE_RECORDING":

@@ -2538,6 +2538,7 @@ class DirectorTab(QWidget):
             self.panel_window.view_visibility_toggled.connect(self._on_panel_view_visibility_toggled)
             self.panel_window.orientation_changed.connect(self._on_panel_orientation_changed)
             self.panel_window.video_feed_toggled.connect(self._on_panel_video_feed_toggled)
+            self.panel_window.backstage_chat_requested.connect(self._open_backstage_peer_chat)
         if hasattr(self, "combo_lan_size"):
             sz_str = self.combo_lan_size.currentData() or "360x202"
             try:
@@ -3280,6 +3281,13 @@ class DirectorTab(QWidget):
         elif cmd_act == "REQUEST_STATE":
             log_debug("HOST_BOUNCER", f"Executing validated REQUEST_STATE from client {client_id}")
             self._broadcast_host_state_update()
+        elif cmd_act == "PEER_CHAT":
+            sender = sanitized.get("sender") or client_id
+            packet = sanitized.get("packet") or ""
+            if packet:
+                if self.host_webrtc:
+                    self.host_webrtc.broadcast_peer_chat(packet, sender, exclude_client_id=client_id)
+                self._dispatch_peer_chat_to_plugin(sender, packet)
 
     def _on_host_p2p_peer_authenticated(self, client_id: str, twitch_user: str):
         clean_user = (twitch_user or "").strip().lstrip("@")
@@ -3380,6 +3388,9 @@ class DirectorTab(QWidget):
         self.client_webrtc = WebRTCManager(role="client", channel_name=ch, passkey=pk, twitch_user=user, parent=self)
         self.client_webrtc.connection_status_changed.connect(self._on_client_p2p_status_changed)
         self.client_webrtc.state_received.connect(self._on_client_p2p_state_received)
+        self.client_webrtc.peer_chat_received.connect(
+            lambda _pid, payload: self._dispatch_peer_chat_to_plugin(payload.get("sender", "Host"), payload.get("packet", ""))
+        )
         self.slobs_client.configure_connection(mode="webrtc_client")
         self.slobs_client.set_webrtc_client(self.client_webrtc)
         if self.panel_window:
@@ -3523,6 +3534,36 @@ class DirectorTab(QWidget):
     def _on_panel_video_feed_toggled(self, checked: bool):
         if checked:
             self._close_stream_browser()
+
+    def is_p2p_chat_connected(self) -> bool:
+        host_ok = bool(self.host_webrtc and self.host_webrtc.isRunning())
+        client_ok = bool(self.client_webrtc and self.client_webrtc.isRunning() and self.client_webrtc.is_connected())
+        return host_ok or client_ok
+
+    def send_backstage_chat(self, sender: str, packet: str) -> bool:
+        sent = False
+        if self.host_webrtc and self.host_webrtc.isRunning():
+            self.host_webrtc.broadcast_peer_chat(packet, sender or "Host")
+            sent = True
+        if self.client_webrtc and self.client_webrtc.isRunning() and self.client_webrtc.is_connected():
+            self.client_webrtc.broadcast_peer_chat(packet, sender or "Director")
+            sent = True
+        return sent
+
+    def _dispatch_peer_chat_to_plugin(self, sender: str, packet: str):
+        ov = self.overlay
+        pm = getattr(ov, "plugin_manager", None) if ov else None
+        if pm:
+            pm.dispatch_event("peer_chat_received", {"sender": sender, "packet": packet})
+
+    def _open_backstage_peer_chat(self):
+        mw = getattr(self, "main_win", None)
+        if mw:
+            mw.show()
+            mw.raise_()
+            mw.activateWindow()
+            if hasattr(mw, "focus_plugin_page"):
+                mw.focus_plugin_page("calyx.backstage_chat")
 
     def _close_stream_browser(self):
         proc = getattr(self, "_browser_proc", None)

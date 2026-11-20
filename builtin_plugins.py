@@ -505,6 +505,11 @@ class BackstagePeerChatPlugin(CalyxPluginBase):
         grp = QGroupBox("🔐 Encrypted Backstage Peer Chat")
         g_lay = QVBoxLayout(grp)
 
+        lbl_p2p = QLabel("⚪ Local Loopback (connect Stream Director P2P to chat live)")
+        lbl_p2p.setWordWrap(True)
+        lbl_p2p.setStyleSheet("font-size: 11px; font-weight: bold;")
+        g_lay.addWidget(lbl_p2p)
+
         top = QHBoxLayout()
         txt_key = QLineEdit(cfg.get("passphrase", "calyx-backstage-key"))
         txt_key.setMinimumWidth(0)
@@ -529,16 +534,54 @@ class BackstagePeerChatPlugin(CalyxPluginBase):
         send_row.addWidget(btn_send)
         g_lay.addLayout(send_row)
 
+        def _get_director_tab():
+            ov = self.api.get_overlay()
+            sw = getattr(ov, "settings_window", None) if ov else None
+            return getattr(sw, "tab_director", None) if sw else None
+
+        def _refresh_p2p_badge():
+            dt = _get_director_tab()
+            if dt and hasattr(dt, "is_p2p_chat_connected") and dt.is_p2p_chat_connected():
+                lbl_p2p.setText("🟢 Live Director P2P Linked — messages travel over WebRTC DataChannel")
+                lbl_p2p.setStyleSheet("font-size: 11px; font-weight: bold; color: #34d399;")
+            else:
+                lbl_p2p.setText("⚪ Local Loopback (Start Host or Connect as Remote Director in Stream Director to chat live)")
+                lbl_p2p.setStyleSheet("font-size: 11px; font-weight: bold; color: #9ca3af;")
+
+        status_timer = QTimer(root)
+        status_timer.setInterval(3000)
+        status_timer.timeout.connect(_refresh_p2p_badge)
+        status_timer.start()
+        _refresh_p2p_badge()
+
+        def _on_incoming(payload):
+            if not isinstance(payload, dict):
+                return
+            sender = str(payload.get("sender", "Peer"))
+            packet = str(payload.get("packet", ""))
+            decoded = _decrypt_chat_msg(packet, txt_key.text())
+            ts = datetime.now().strftime("%H:%M:%S")
+            if decoded is not None:
+                chat_log.append(f"[{ts}] 🔒 {sender}: {decoded}")
+            else:
+                chat_log.append(f"[{ts}] ⚠️ {sender}: <Undecryptable message — Room Key mismatch>")
+
+        self.api.on_event("peer_chat_received", _on_incoming)
+
         def _send():
             msg = txt_msg.text().strip()
             if not msg:
                 return
             key = txt_key.text()
-            self.api.save_config({"passphrase": key, "handle": cfg.get("handle", "Host")})
+            ov = self.api.get_overlay()
+            handle = (getattr(ov, "twitch_display_name", "") or getattr(ov, "twitch_channel", "") or cfg.get("handle", "Host")) if ov else "Host"
+            self.api.save_config({"passphrase": key, "handle": handle})
             packet = _encrypt_chat_msg(msg, key)
-            decoded = _decrypt_chat_msg(packet, key)
             ts = datetime.now().strftime("%H:%M:%S")
-            chat_log.append(f"[{ts}] 🔒 Host: {decoded}  (wire: {packet[:24]}...)")
+            dt = _get_director_tab()
+            sent_live = bool(dt and hasattr(dt, "send_backstage_chat") and dt.send_backstage_chat(handle, packet))
+            tag = "P2P" if sent_live else "Local"
+            chat_log.append(f"[{ts}] 🔒 {handle} ({tag}): {msg}")
             txt_msg.clear()
 
         btn_send.clicked.connect(_send)
@@ -696,7 +739,7 @@ def get_builtin_plugin_specs() -> List[Dict[str, Any]]:
                 "description": "End-to-end encrypted backstage text chat between streamer and remote directors.",
                 "category": "PLUGINS",
                 "icon": "🔐",
-                "permissions": ["config_storage", "peer_chat"],
+                "permissions": ["config_storage", "peer_chat", "broadcast_events"],
             },
             "factory": BackstagePeerChatPlugin,
         },

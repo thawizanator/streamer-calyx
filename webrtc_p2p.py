@@ -64,6 +64,7 @@ class WebRTCManager(QThread):
     peer_disconnected = pyqtSignal(str)              # (peer_id)
     command_received = pyqtSignal(str, dict)          # (peer_id, payload)
     state_received = pyqtSignal(dict)                 # (state_payload)
+    peer_chat_received = pyqtSignal(str, dict)        # (peer_id, {sender, packet})
     error_occurred = pyqtSignal(str)
 
     def __init__(self, role: str, channel_name: str, passkey: str, twitch_user: str = "", twitch_token: str = "", parent: Optional[QObject] = None):
@@ -533,6 +534,12 @@ class WebRTCManager(QThread):
                 if state:
                     self.state_received.emit(state)
 
+            elif mtype == "PEER_CHAT":
+                self.peer_chat_received.emit("host", {
+                    "sender": str(payload.get("sender", "Host")),
+                    "packet": str(payload.get("packet", "")),
+                })
+
             elif mtype == "PONG":
                 self._last_pong = time.time()
                 sent_ts = payload.get("timestamp")
@@ -665,5 +672,20 @@ class WebRTCManager(QThread):
                 payload["visible"] = value
             elif action == "PLAY_SOUND":
                 payload["clip_id"] = value
+            elif action == "PEER_CHAT" and isinstance(value, dict):
+                payload["packet"] = str(value.get("packet", ""))
+                payload["sender"] = str(value.get("sender", ""))
 
         self._send_on_channel(self._client_channel, payload)
+
+    def broadcast_peer_chat(self, packet: str, sender: str = "Host", exclude_client_id: Optional[str] = None):
+        """Broadcasts an encrypted peer chat packet to all authenticated peers (or to host if client)."""
+        if self.role == "host":
+            msg = {"type": "PEER_CHAT", "sender": sender, "packet": packet}
+            for cid, info in list(self._peers.items()):
+                if exclude_client_id and cid == exclude_client_id:
+                    continue
+                if info.get("auth", False) and info.get("channel"):
+                    self._send_on_channel(info["channel"], msg)
+        elif self._client_channel:
+            self.send_command("PEER_CHAT", value={"packet": packet, "sender": sender})

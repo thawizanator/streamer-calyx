@@ -1117,6 +1117,7 @@ class DirectorPanelWindow(QWidget):
     view_visibility_toggled = pyqtSignal(str, bool)
     orientation_changed = pyqtSignal(str)
     video_feed_toggled = pyqtSignal(bool)
+    backstage_chat_requested = pyqtSignal()
 
 
     DEFAULT_SCENES = [
@@ -1309,6 +1310,26 @@ class DirectorPanelWindow(QWidget):
         """)
         self.btn_video_feed.toggled.connect(self._on_video_feed_toggled)
         top_bar.addWidget(self.btn_video_feed)
+
+        self.btn_peer_chat = QPushButton("💬 Chat")
+        self.btn_peer_chat.setFixedHeight(20)
+        self.btn_peer_chat.setMinimumWidth(48)
+        self.btn_peer_chat.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_peer_chat.setToolTip("Open Encrypted Backstage Peer Chat with connected directors")
+        self.btn_peer_chat.setStyleSheet("""
+            QPushButton {
+                background: #27272a;
+                color: #c084fc;
+                border: 1px solid #3f3f46;
+                border-radius: 10px;
+                font-size: 10px;
+                font-weight: bold;
+                padding: 0 6px;
+            }
+            QPushButton:hover { border-color: #a855f7; color: #ffffff; }
+        """)
+        self.btn_peer_chat.clicked.connect(lambda: self.backstage_chat_requested.emit())
+        top_bar.addWidget(self.btn_peer_chat)
 
         self.btn_resync = QPushButton("🔄")
         self.btn_resync.setFixedSize(20, 20)
