@@ -1375,6 +1375,7 @@ class DirectorPanelWindow(QWidget):
         top_bar.addWidget(self.btn_flip)
 
         btn_settings = QPushButton("⚙️")
+        self.btn_settings = btn_settings
         btn_settings.setFixedSize(20, 20)
         btn_settings.setCursor(Qt.CursorShape.PointingHandCursor)
         btn_settings.setToolTip("Open Stream Director Settings")
@@ -1394,6 +1395,48 @@ class DirectorPanelWindow(QWidget):
         """)
         btn_settings.clicked.connect(self.settings_requested.emit)
         top_bar.addWidget(btn_settings)
+
+        # Windows-style Hidden Icon Drawer button (visible in Vertical/Side mode)
+        self.btn_icon_drawer = QPushButton("⌄")
+        self.btn_icon_drawer.setFixedSize(24, 20)
+        self.btn_icon_drawer.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_icon_drawer.setToolTip("Show hidden dock icons & tools")
+        self.btn_icon_drawer.setStyleSheet("""
+            QPushButton {
+                background: #27272a;
+                color: #e4e4e7;
+                border: 1px solid #3f3f46;
+                border-radius: 10px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background: #3f3f46;
+                border-color: #9146ff;
+                color: #ffffff;
+            }
+        """)
+        self.btn_icon_drawer.clicked.connect(self._toggle_icon_drawer)
+        self.btn_icon_drawer.setVisible(False)
+        top_bar.addWidget(self.btn_icon_drawer)
+
+        self._top_bar_layout = top_bar
+        self._drawer_buttons = [
+            self.btn_soundboard,
+            self.btn_record,
+            self.btn_video_feed,
+            self.btn_peer_chat,
+            self.btn_resync,
+            self.btn_flip,
+            self.btn_settings,
+        ]
+        self._icon_drawer_popup = QFrame(self, Qt.WindowType.Popup | Qt.WindowType.FramelessWindowHint)
+        self._icon_drawer_popup.setStyleSheet(
+            "QFrame { background-color: #18181b; border: 1px solid #3f3f46; border-radius: 10px; }"
+        )
+        self._icon_drawer_grid = QGridLayout(self._icon_drawer_popup)
+        self._icon_drawer_grid.setContentsMargins(10, 10, 10, 10)
+        self._icon_drawer_grid.setSpacing(8)
 
         btn_close = QPushButton("✕")
         btn_close.setFixedSize(20, 20)
@@ -1943,8 +1986,52 @@ class DirectorPanelWindow(QWidget):
 
     def toggle_orientation(self):
         """Toggles layout orientation between 'horizontal' (taskbar) and 'vertical' (side-dock)."""
+        if hasattr(self, "_icon_drawer_popup") and self._icon_drawer_popup.isVisible():
+            self._icon_drawer_popup.hide()
         new_mode = "vertical" if getattr(self, "orientation", "horizontal") == "horizontal" else "horizontal"
         self.set_orientation(new_mode)
+
+    def _sync_icon_drawer_mode(self, vertical: bool):
+        if not hasattr(self, "_top_bar_layout") or not hasattr(self, "_drawer_buttons"):
+            return
+        if vertical:
+            for b in self._drawer_buttons:
+                self._top_bar_layout.removeWidget(b)
+            for idx, b in enumerate(self._drawer_buttons):
+                r, c = divmod(idx, 3)
+                self._icon_drawer_grid.addWidget(b, r, c)
+                b.show()
+            self.btn_icon_drawer.setVisible(True)
+        else:
+            if self._icon_drawer_popup.isVisible():
+                self._icon_drawer_popup.hide()
+            self.btn_icon_drawer.setVisible(False)
+            insert_idx = self._top_bar_layout.indexOf(self.btn_icon_drawer)
+            for b in self._drawer_buttons:
+                self._icon_drawer_grid.removeWidget(b)
+                self._top_bar_layout.insertWidget(insert_idx, b)
+                insert_idx += 1
+                b.show()
+
+    def _toggle_icon_drawer(self):
+        if not hasattr(self, "_icon_drawer_popup"):
+            return
+        if self._icon_drawer_popup.isVisible():
+            self._icon_drawer_popup.hide()
+            return
+        self._icon_drawer_popup.adjustSize()
+        btn_pos = self.btn_icon_drawer.mapToGlobal(self.btn_icon_drawer.rect().bottomRight())
+        pop_w = self._icon_drawer_popup.width()
+        pop_h = self._icon_drawer_popup.height()
+        x = btn_pos.x() - pop_w
+        y = btn_pos.y() + 6
+        scr = self.screen() or QApplication.primaryScreen()
+        if scr:
+            avail = scr.availableGeometry()
+            x = max(avail.left() + 6, min(x, avail.right() - pop_w - 6))
+            y = max(avail.top() + 6, min(y, avail.bottom() - pop_h - 6))
+        self._icon_drawer_popup.move(x, y)
+        self._icon_drawer_popup.show()
 
     def set_orientation(self, mode: str):
         """Applies horizontal or vertical dock orientation, restructuring child groupboxes."""
@@ -1959,11 +2046,13 @@ class DirectorPanelWindow(QWidget):
                 if hasattr(self, "lbl_status") and self.lbl_status:
                     self.lbl_status.setText("<span style='color: #22c55e;'>●</span>")
                 if hasattr(self, "btn_flip") and self.btn_flip:
-                    self.btn_flip.setText("⇄")
-                    self.btn_flip.setFixedSize(22, 20)
+                    self.btn_flip.setText("⇄ Flat")
+                    self.btn_flip.setFixedSize(48, 20)
                     self.btn_flip.setToolTip("Dock layout: Vertical. Click to switch to Horizontal (bottom-dock).")
+                self._sync_icon_drawer_mode(vertical=True)
                 self.setFixedWidth(230)
             else:
+                self._sync_icon_drawer_mode(vertical=False)
                 self.setMinimumWidth(380)
                 self.setMaximumWidth(16777215)
                 if getattr(self, "_user_custom_width", None) and self._user_custom_width <= 380:
