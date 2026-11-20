@@ -44,6 +44,11 @@ hidden_imports = [
     'logs_tab',
     'beta_telemetry_dialog',
     'debug_logger',
+    'platform_gateway',
+    'gateway_tab',
+    'plugin_engine',
+    'builtin_plugins',
+    'plugins_tab',
 ] + collect_submodules('aiortc') + collect_submodules('aioice')
 
 excluded_modules = [
