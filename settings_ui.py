@@ -1800,7 +1800,8 @@ PAGE_TITLES = {
     13: "🌸  About Streamer Calyx",
     14: "🎧  Audio Devices & Routing",
     15: "🌐  Multi-Platform Broadcast Gateway",
-    16: "🧩  Plugins & Add-ons"
+    16: "🧩  Plugins & Add-ons",
+    17: "❓  Help & Documentation"
 }
 
 SIDEBAR_CATEGORIES = [
@@ -1830,6 +1831,7 @@ SIDEBAR_CATEGORIES = [
         (16, "🧩  Plugins && Add-ons", "btn_nav_plugins"),
         (4, "⚙️  System", "btn_nav_system"),
         (12, "📑  Logs", "btn_nav_logs"),
+        (17, "❓  Help", "btn_nav_help"),
         (13, "🌸  About", "btn_nav_about"),
     ]),
 ]
@@ -2094,6 +2096,24 @@ class SettingsWindow(QWidget):
         self.plugin_manager = pm
         self.tab_plugins = PluginsTab(self, pm)
         self.stacked_pages.addWidget(self.tab_plugins)           # 16
+
+        # Initialize Help Tab (idx 17)
+        self.tab_help = QWidget()
+        help_lay = QVBoxLayout(self.tab_help)
+        help_lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_help_icon = QLabel("❓")
+        lbl_help_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_help_icon.setStyleSheet("font-size: 42px;")
+        lbl_help_title = QLabel("<b>Help &amp; Documentation</b>")
+        lbl_help_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_help_title.setStyleSheet("font-size: 18px;")
+        lbl_help_soon = QLabel("Coming soon")
+        lbl_help_soon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl_help_soon.setStyleSheet("font-size: 14px; opacity: 0.75;")
+        help_lay.addWidget(lbl_help_icon)
+        help_lay.addWidget(lbl_help_title)
+        help_lay.addWidget(lbl_help_soon)
+        self.stacked_pages.addWidget(self.tab_help)              # 17
 
         content_layout.addWidget(self.stacked_pages)
 
