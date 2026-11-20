@@ -1,7 +1,7 @@
 import sys
 import time
 import threading
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QTimer
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QTimer, QEvent
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QSlider, QFrame, QGridLayout, QApplication, QStyleOption, QStyle,
@@ -1434,9 +1434,11 @@ class DirectorPanelWindow(QWidget):
         self._icon_drawer_popup.setStyleSheet(
             "QFrame { background-color: #18181b; border: 1px solid #3f3f46; border-radius: 10px; }"
         )
+        self._icon_drawer_popup.installEventFilter(self)
+        self._drawer_closed_at = 0.0
         self._icon_drawer_grid = QGridLayout(self._icon_drawer_popup)
         self._icon_drawer_grid.setContentsMargins(10, 10, 10, 10)
-        self._icon_drawer_grid.setSpacing(8)
+        self._icon_drawer_grid.setSpacing(6)
 
         btn_close = QPushButton("✕")
         btn_close.setFixedSize(20, 20)
@@ -1995,10 +1997,16 @@ class DirectorPanelWindow(QWidget):
         if not hasattr(self, "_top_bar_layout") or not hasattr(self, "_drawer_buttons"):
             return
         if vertical:
+            self.btn_soundboard.setText("🔊 SFX")
+            self.btn_resync.setText("🔄 Sync")
+            self.btn_settings.setText("⚙️ Config")
             for b in self._drawer_buttons:
                 self._top_bar_layout.removeWidget(b)
+                b.setMinimumWidth(70)
+                b.setMaximumWidth(90)
+                b.setFixedHeight(24)
             for idx, b in enumerate(self._drawer_buttons):
-                r, c = divmod(idx, 3)
+                r, c = divmod(idx, 2)
                 self._icon_drawer_grid.addWidget(b, r, c)
                 b.show()
             self.btn_icon_drawer.setVisible(True)
@@ -2006,6 +2014,22 @@ class DirectorPanelWindow(QWidget):
             if self._icon_drawer_popup.isVisible():
                 self._icon_drawer_popup.hide()
             self.btn_icon_drawer.setVisible(False)
+            self.btn_soundboard.setText("🔊")
+            self.btn_soundboard.setFixedSize(20, 20)
+            self.btn_resync.setText("🔄")
+            self.btn_resync.setFixedSize(20, 20)
+            self.btn_settings.setText("⚙️")
+            self.btn_settings.setFixedSize(20, 20)
+            self.btn_record.setFixedHeight(20)
+            self.btn_record.setMinimumWidth(52)
+            self.btn_record.setMaximumWidth(16777215)
+            self.btn_video_feed.setFixedHeight(20)
+            self.btn_video_feed.setMinimumWidth(52)
+            self.btn_video_feed.setMaximumWidth(16777215)
+            self.btn_peer_chat.setFixedHeight(20)
+            self.btn_peer_chat.setMinimumWidth(48)
+            self.btn_peer_chat.setMaximumWidth(16777215)
+            self.btn_flip.setFixedSize(50, 20)
             insert_idx = self._top_bar_layout.indexOf(self.btn_icon_drawer)
             for b in self._drawer_buttons:
                 self._icon_drawer_grid.removeWidget(b)
@@ -2015,6 +2039,8 @@ class DirectorPanelWindow(QWidget):
 
     def _toggle_icon_drawer(self):
         if not hasattr(self, "_icon_drawer_popup"):
+            return
+        if time.time() - getattr(self, "_drawer_closed_at", 0.0) < 0.28:
             return
         if self._icon_drawer_popup.isVisible():
             self._icon_drawer_popup.hide()
@@ -2032,6 +2058,11 @@ class DirectorPanelWindow(QWidget):
             y = max(avail.top() + 6, min(y, avail.bottom() - pop_h - 6))
         self._icon_drawer_popup.move(x, y)
         self._icon_drawer_popup.show()
+
+    def eventFilter(self, obj, event):
+        if obj is getattr(self, "_icon_drawer_popup", None) and event.type() == QEvent.Type.Hide:
+            self._drawer_closed_at = time.time()
+        return super().eventFilter(obj, event)
 
     def set_orientation(self, mode: str):
         """Applies horizontal or vertical dock orientation, restructuring child groupboxes."""
