@@ -1510,6 +1510,8 @@ class RedBorderOverlay(QMainWindow):
         self.update()
 
     def open_settings(self):
+        if not getattr(self, "settings_window", None):
+            return
         if hasattr(self.settings_window, "tab_monitor"):
             self.settings_window.tab_monitor.refresh_monitors()
             self.settings_window.tab_monitor.monitor_combo.setCurrentIndex(self.target_monitor_index)
