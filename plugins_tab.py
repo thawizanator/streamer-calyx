@@ -146,7 +146,7 @@ class PluginsTab(QWidget):
         lay.addWidget(drop_box)
 
         # 2. Installed & First-Party Plugins List
-        self.grp_list = QGroupBox("Installed & First-Party Core Plugins")
+        self.grp_list = QGroupBox("Installed && First-Party Core Plugins")
         self.list_lay = QVBoxLayout(self.grp_list)
         self.list_lay.setSpacing(8)
         lay.addWidget(self.grp_list)

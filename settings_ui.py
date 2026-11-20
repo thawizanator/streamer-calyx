@@ -2482,7 +2482,23 @@ class SettingsWindow(QWidget):
         if plugin_id in self._dynamic_plugins:
             return self._dynamic_plugins[plugin_id]["page_idx"]
 
-        page_idx = self.stacked_pages.addWidget(widget)
+        wrapper = QWidget()
+        w_lay = QVBoxLayout(wrapper)
+        w_lay.setContentsMargins(0, 0, 0, 0)
+        w_lay.setSpacing(6)
+
+        nav_bar = QHBoxLayout()
+        nav_bar.setContentsMargins(12, 6, 12, 0)
+        btn_back = QPushButton("⬅ Back to Plugins && Add-ons")
+        btn_back.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_back.setStyleSheet("padding: 4px 10px; font-weight: bold;")
+        btn_back.clicked.connect(lambda: self.set_view_index(16))
+        nav_bar.addWidget(btn_back)
+        nav_bar.addStretch()
+        w_lay.addLayout(nav_bar)
+        w_lay.addWidget(widget, 1)
+
+        page_idx = self.stacked_pages.addWidget(wrapper)
         self._dynamic_page_titles[page_idx] = title
 
         cat_id = self._resolve_plugin_cat_id(category_label)
@@ -2496,7 +2512,7 @@ class SettingsWindow(QWidget):
 
         self._dynamic_plugins[plugin_id] = {
             "page_idx": page_idx,
-            "widget": widget,
+            "widget": wrapper,
             "btn": btn,
             "cat_id": cat_id,
         }
