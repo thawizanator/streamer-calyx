@@ -220,7 +220,7 @@ class ContextHelpFilter(QObject):
         search_blob = f"{title} {tooltip} {section} {widget.objectName()}".lower()
         body = ""
         help_db = load_context_help_db()
-        for key, (db_title, db_body) in help_db.items():
+        for key, (db_title, db_body) in sorted(help_db.items(), key=lambda kv: len(kv[0]), reverse=True):
             if key in search_blob:
                 if not title:
                     title = db_title
