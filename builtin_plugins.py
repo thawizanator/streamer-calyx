@@ -7,21 +7,26 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import json
 import os
 import random
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtCore import Qt, QTimer, QUrl
+from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -58,31 +63,185 @@ def _make_scrollable_page(parent: Optional[QWidget] = None) -> tuple[QWidget, QV
 # ==============================================================================
 # 1. Stream Ending Credits (calyx.ending_credits)
 # ==============================================================================
+DEFAULT_CREDITS_DATA = [
+    {"role": "The Streamer", "scale": 1.9, "names": ["ThaWizanator"]},
+    {"role": "Subscribers", "scale": 1.0, "names": ["SubscriberOne", "SubscriberTwo"]},
+    {"role": "Followers", "scale": 0.85, "names": ["FollowerOne", "FollowerTwo"]},
+    {
+        "role": "Special Thanks",
+        "scale": 1.1,
+        "names": [
+            {"name": "Supporter", "reason": "For helping make the stream awesome!"}
+        ],
+    },
+]
+
+
+def _generate_credits_html(credits_data: List[Dict[str, Any]], speed: int = 60, loop: bool = True, transparent: bool = False) -> str:
+    bg_css = "transparent" if transparent else "black"
+    data_json = json.dumps(credits_data, indent=4, ensure_ascii=False)
+    loop_js = "true" if loop else "false"
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>End Credits Sequence — Streamer Calyx</title>
+    <style>
+        body {{
+            margin: 0;
+            padding: 0;
+            background-color: {bg_css};
+            color: white;
+            font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;
+            overflow: hidden;
+        }}
+        #credits-container {{ position: relative; width: 100vw; height: 100vh; }}
+        #credits-content {{ position: absolute; width: 100%; text-align: center; }}
+        .credit-block {{ margin-bottom: 80px; --block-scale: 1; }}
+        .role {{
+            font-size: calc(1.2rem * var(--block-scale));
+            font-weight: bold;
+            color: #888;
+            margin-bottom: calc(20px * var(--block-scale));
+            text-transform: uppercase;
+            letter-spacing: 3px;
+        }}
+        .name {{
+            font-size: calc(1.6rem * var(--block-scale));
+            margin-bottom: calc(10px * var(--block-scale));
+            letter-spacing: 1px;
+        }}
+        .thanks-item {{
+            display: flex; justify-content: center; gap: 30px;
+            margin-bottom: calc(15px * var(--block-scale));
+            width: 100%; max-width: 800px; margin-left: auto; margin-right: auto;
+            break-inside: avoid;
+        }}
+        .thanks-name {{
+            font-size: calc(1.4rem * var(--block-scale));
+            text-align: right; width: 50%; letter-spacing: 1px;
+        }}
+        .thanks-reason {{
+            font-size: calc(1.2rem * var(--block-scale));
+            color: #bbb; text-align: left; width: 50%; font-style: italic; align-self: center;
+        }}
+        .names-container {{ display: flex; flex-direction: column; align-items: center; }}
+        .names-container.two-columns {{
+            display: block; column-count: 2; column-gap: 80px;
+            max-width: 800px; margin: 0 auto; text-align: center;
+        }}
+        @keyframes scrollUp {{
+            0% {{ transform: translateY(100vh); }}
+            100% {{ transform: translateY(-100%); }}
+        }}
+    </style>
+</head>
+<body>
+    <div id="credits-container"><div id="credits-content"></div></div>
+    <script>
+        const config = {{ speed: {int(speed)}, loop: {loop_js} }};
+        const creditsData = {data_json};
+        const contentDiv = document.getElementById('credits-content');
+        function buildCredits() {{
+            creditsData.forEach(block => {{
+                const blockDiv = document.createElement('div');
+                blockDiv.className = 'credit-block';
+                blockDiv.style.setProperty('--block-scale', block.scale || 1);
+                const roleDiv = document.createElement('div');
+                roleDiv.className = 'role';
+                roleDiv.innerText = block.role || '';
+                blockDiv.appendChild(roleDiv);
+                const namesDiv = document.createElement('div');
+                namesDiv.className = 'names-container';
+                const names = Array.isArray(block.names) ? block.names : [];
+                if (names.length > 24) namesDiv.classList.add('two-columns');
+                names.forEach(item => {{
+                    if (typeof item === 'string') {{
+                        const nameDiv = document.createElement('div');
+                        nameDiv.className = 'name';
+                        nameDiv.innerText = item;
+                        namesDiv.appendChild(nameDiv);
+                    }} else if (item && typeof item === 'object') {{
+                        const itemDiv = document.createElement('div');
+                        itemDiv.className = 'thanks-item';
+                        const nameDiv = document.createElement('div');
+                        nameDiv.className = 'thanks-name';
+                        nameDiv.innerText = item.name || '';
+                        const reasonDiv = document.createElement('div');
+                        reasonDiv.className = 'thanks-reason';
+                        reasonDiv.innerText = item.reason || '';
+                        itemDiv.appendChild(nameDiv);
+                        itemDiv.appendChild(reasonDiv);
+                        namesDiv.appendChild(itemDiv);
+                    }}
+                }});
+                blockDiv.appendChild(namesDiv);
+                contentDiv.appendChild(blockDiv);
+            }});
+        }}
+        function startScroll() {{
+            const totalDistance = contentDiv.offsetHeight + window.innerHeight;
+            const duration = totalDistance / Math.max(1, config.speed);
+            contentDiv.style.animation = `scrollUp ${{duration}}s linear ${{config.loop ? 'infinite' : '1'}}`;
+        }}
+        window.onload = () => {{ buildCredits(); requestAnimationFrame(startScroll); }};
+        window.addEventListener('resize', startScroll);
+    </script>
+</body>
+</html>
+"""
+
+
+def _format_credits_for_qt(credits_data: List[Dict[str, Any]]) -> str:
+    html_parts = []
+    for block in credits_data:
+        scale = float(block.get("scale", 1.0) or 1.0)
+        role_px = max(11, int(14 * scale))
+        name_px = max(13, int(18 * scale))
+        role = str(block.get("role", "")).upper()
+        html_parts.append(f"<div style='color:#888888; font-size:{role_px}px; font-weight:bold; letter-spacing:2px; margin-top:28px; margin-bottom:10px;'>{role}</div>")
+        for item in block.get("names", []):
+            if isinstance(item, str) and item.strip():
+                html_parts.append(f"<div style='color:#ffffff; font-size:{name_px}px; margin-bottom:6px;'>{item}</div>")
+            elif isinstance(item, dict):
+                n = item.get("name", "")
+                r = item.get("reason", "")
+                html_parts.append(f"<div style='color:#ffffff; font-size:{name_px}px; margin-bottom:6px;'><b>{n}</b> <span style='color:#bbbbbb; font-style:italic; font-size:{max(11, name_px-3)}px;'>— {r}</span></div>")
+    return "".join(html_parts)
+
+
 class _CreditsScrollerWindow(QWidget):
-    def __init__(self, text: str, speed_px: int = 2, font_size: int = 20):
+    def __init__(self, rich_html: str, speed_px: int = 60, loop: bool = True):
         super().__init__()
-        self.setWindowTitle("Stream Ending Credits — Streamer Calyx")
-        self.resize(540, 640)
-        self.setStyleSheet("background-color: #09090b; color: #f4f4f5;")
-        self._speed = max(1, speed_px)
-        self._lbl = QLabel(text, self)
+        self.setWindowTitle("End Credits Sequence — Streamer Calyx")
+        self.resize(680, 720)
+        self.setStyleSheet("background-color: #000000; color: #ffffff;")
+        self._speed = max(10, speed_px)
+        self._loop = loop
+        self._lbl = QLabel(self)
+        self._lbl.setTextFormat(Qt.TextFormat.RichText)
         self._lbl.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         self._lbl.setWordWrap(True)
-        self._lbl.setStyleSheet(f"font-size: {font_size}px; line-height: 1.5; padding: 24px; background: transparent;")
-        self._lbl.setFixedWidth(520)
+        self._lbl.setText(rich_html)
+        self._lbl.setFixedWidth(640)
         self._lbl.adjustSize()
         self._y = float(self.height())
-        self._lbl.move(10, int(self._y))
+        self._lbl.move(20, int(self._y))
         self._timer = QTimer(self)
-        self._timer.setInterval(30)
+        self._timer.setInterval(25)
         self._timer.timeout.connect(self._tick)
         self._timer.start()
 
     def _tick(self):
-        self._y -= self._speed * 0.75
+        self._y -= self._speed * 0.025
         if self._y + self._lbl.height() < 0:
-            self._y = float(self.height())
-        self._lbl.move(10, int(self._y))
+            if self._loop:
+                self._y = float(self.height())
+            else:
+                self._timer.stop()
+                return
+        self._lbl.move(20, int(self._y))
 
     def closeEvent(self, event):
         self._timer.stop()
@@ -96,63 +255,153 @@ class EndingCreditsPlugin(CalyxPluginBase):
 
     def create_widget(self, parent=None):
         root, lay = _make_scrollable_page(parent)
+        default_html_path = os.path.join(
+            os.environ.get("APPDATA", os.path.expanduser("~")),
+            "StreamerCalyx",
+            "end_credits.html",
+        )
         cfg = self.api.get_config({
-            "credits_text": (
-                "THANK YOU FOR WATCHING!\n\n"
-                "--- PATRONS & VIPs ---\n@SupporterOne\n@SupporterTwo\n\n"
-                "--- MODERATORS ---\n@ModHero\n\n"
-                "--- TOP GIFTERS ---\n@GifterLegend\n\n"
-                "--- SPECIAL THANKS ---\nPowered by Streamer Calyx"
-            ),
-            "speed": 2,
-            "font_size": 20,
+            "credits_data": DEFAULT_CREDITS_DATA,
+            "speed": 60,
+            "loop": True,
+            "transparent": False,
+            "html_path": default_html_path,
         })
 
-        grp = QGroupBox("🎬 Stream Ending Credits Scroller")
+        grp = QGroupBox("🎬 Stream Ending Credits (Movie-Style OBS Browser Source + Scroller)")
         g_lay = QVBoxLayout(grp)
+        g_lay.setSpacing(8)
+
+        lbl_info = QLabel(
+            "Uses your structured JSON credit blocks (<code>role</code>, <code>scale</code>, <code>names</code> "
+            "with auto 2-column layout at &gt;24 entries, plus <code>{\"name\", \"reason\"}</code> Special Thanks)."
+        )
+        lbl_info.setWordWrap(True)
+        lbl_info.setStyleSheet("font-size: 11px; opacity: 0.85;")
+        g_lay.addWidget(lbl_info)
+
         txt = QTextEdit()
-        txt.setPlainText(cfg["credits_text"])
-        txt.setFixedHeight(220)
+        txt.setStyleSheet("font-family: Consolas, monospace; font-size: 11px;")
+        txt.setPlainText(json.dumps(cfg.get("credits_data", DEFAULT_CREDITS_DATA), indent=2, ensure_ascii=False))
+        txt.setFixedHeight(230)
         g_lay.addWidget(txt)
 
         ctrl = QHBoxLayout()
-        ctrl.addWidget(QLabel("Scroll Speed:"))
+        ctrl.addWidget(QLabel("Speed (px/s):"))
         spn_speed = QSpinBox()
-        spn_speed.setRange(1, 10)
-        spn_speed.setValue(int(cfg.get("speed", 2)))
+        spn_speed.setRange(10, 300)
+        spn_speed.setValue(int(cfg.get("speed", 60)))
         ctrl.addWidget(spn_speed)
 
-        ctrl.addWidget(QLabel("Font Size:"))
-        spn_font = QSpinBox()
-        spn_font.setRange(12, 48)
-        spn_font.setValue(int(cfg.get("font_size", 20)))
-        ctrl.addWidget(spn_font)
+        chk_loop = QCheckBox("Loop")
+        chk_loop.setChecked(bool(cfg.get("loop", True)))
+        ctrl.addWidget(chk_loop)
+
+        chk_trans = QCheckBox("Transparent BG (OBS)")
+        chk_trans.setChecked(bool(cfg.get("transparent", False)))
+        ctrl.addWidget(chk_trans)
         ctrl.addStretch()
         g_lay.addLayout(ctrl)
 
+        path_row = QHBoxLayout()
+        txt_html_path = QLineEdit(str(cfg.get("html_path", default_html_path)))
+        txt_html_path.setMinimumWidth(0)
+        btn_browse = QPushButton("Browse...")
+        path_row.addWidget(QLabel("OBS HTML:"))
+        path_row.addWidget(txt_html_path, 1)
+        path_row.addWidget(btn_browse)
+        g_lay.addLayout(path_row)
+
         btns = QHBoxLayout()
-        btn_save = QPushButton("💾 Save Credits")
-        btn_launch = QPushButton("🎬 Launch Credits Window")
+        btn_import = QPushButton("📂 Import HTML...")
+        btn_save = QPushButton("💾 Save && Export HTML")
+        btn_browser = QPushButton("🌐 Preview HTML")
+        btn_launch = QPushButton("🎬 Launch Window")
         btn_launch.setStyleSheet("background-color: #6d28d9; color: white; font-weight: bold; padding: 5px 12px; border-radius: 4px;")
 
-        def _save():
-            self.api.save_config({
-                "credits_text": txt.toPlainText(),
-                "speed": spn_speed.value(),
-                "font_size": spn_font.value(),
-            })
-            self.api.show_overlay_toast("Ending Credits saved!", True)
+        def _parse_data() -> Optional[List[Dict[str, Any]]]:
+            try:
+                parsed = json.loads(txt.toPlainText())
+                if not isinstance(parsed, list):
+                    raise ValueError("Credits JSON must be a list of role blocks.")
+                return parsed
+            except Exception as e:
+                QMessageBox.warning(root, "Invalid Credits JSON", f"Please fix JSON syntax:\n{e}")
+                return None
 
-        def _launch():
-            _save()
+        def _save_and_export() -> Optional[List[Dict[str, Any]]]:
+            data = _parse_data()
+            if data is None:
+                return None
+            out_path = txt_html_path.text().strip() or default_html_path
+            os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+            html_str = _generate_credits_html(data, spn_speed.value(), chk_loop.isChecked(), chk_trans.isChecked())
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(html_str)
+            self.api.save_config({
+                "credits_data": data,
+                "speed": spn_speed.value(),
+                "loop": chk_loop.isChecked(),
+                "transparent": chk_trans.isChecked(),
+                "html_path": out_path,
+            })
+            self.api.show_overlay_toast(f"Credits HTML exported!", True)
+            return data
+
+        def _import_html():
+            p, _ = QFileDialog.getOpenFileName(root, "Import Credits HTML (e.g. end credits B.html)", "", "HTML Files (*.html *.htm)")
+            if not p:
+                return
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    raw = f.read()
+                m = re.search(r"const\s+creditsData\s*=\s*(\[[\s\S]*?\]);", raw)
+                if not m:
+                    QMessageBox.warning(root, "Import Notice", "Could not find `const creditsData = [...]` in that HTML file.")
+                    return
+                js_arr = m.group(1)
+                # Strip JS // line comments and trailing commas, quote unquoted keys
+                js_arr = re.sub(r"//.*", "", js_arr)
+                js_arr = re.sub(r"([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)\s*:", r'\1"\2":', js_arr)
+                js_arr = re.sub(r",\s*([}\]])", r"\1", js_arr)
+                # Normalize single-quoted strings if present via ast.literal_eval fallback
+                try:
+                    parsed = json.loads(js_arr)
+                except Exception:
+                    import ast
+                    parsed = ast.literal_eval(js_arr)
+                txt.setPlainText(json.dumps(parsed, indent=2, ensure_ascii=False))
+                self.api.show_overlay_toast("Imported creditsData from HTML!", True)
+            except Exception as e:
+                QMessageBox.warning(root, "Import Error", f"Failed to parse creditsData:\n{e}")
+
+        def _browse():
+            p, _ = QFileDialog.getSaveFileName(root, "Save OBS Credits HTML", txt_html_path.text(), "HTML Files (*.html)")
+            if p:
+                txt_html_path.setText(p)
+
+        def _preview_browser():
+            if _save_and_export() is not None:
+                QDesktopServices.openUrl(QUrl.fromLocalFile(txt_html_path.text().strip()))
+
+        def _launch_win():
+            data = _save_and_export()
+            if data is None:
+                return
             if self._win:
                 self._win.close()
-            self._win = _CreditsScrollerWindow(txt.toPlainText(), spn_speed.value(), spn_font.value())
+            self._win = _CreditsScrollerWindow(_format_credits_for_qt(data), spn_speed.value(), chk_loop.isChecked())
             self._win.show()
 
-        btn_save.clicked.connect(_save)
-        btn_launch.clicked.connect(_launch)
+        btn_browse.clicked.connect(_browse)
+        btn_import.clicked.connect(_import_html)
+        btn_save.clicked.connect(_save_and_export)
+        btn_browser.clicked.connect(_preview_browser)
+        btn_launch.clicked.connect(_launch_win)
+
+        btns.addWidget(btn_import)
         btns.addWidget(btn_save)
+        btns.addWidget(btn_browser)
         btns.addWidget(btn_launch)
         btns.addStretch()
         g_lay.addLayout(btns)
