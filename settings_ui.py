@@ -2581,8 +2581,10 @@ class SettingsWindow(QWidget):
         cat_id = self._resolve_plugin_cat_id(category_label)
         cat_box = self._cat_containers.get(cat_id) or self._cat_containers.get("plugins")
         btn = self._create_nav_btn(nav_label, page_idx)
-        if cat_box and cat_box.layout():
+        if cat_box is not None and cat_box.layout() is not None:
             cat_box.layout().addWidget(btn)
+            btn.show()
+            cat_box.adjustSize()
 
         self._dynamic_plugins[plugin_id] = {
             "page_idx": page_idx,
