@@ -40,6 +40,10 @@ PERMISSION_DESCRIPTIONS: Dict[str, str] = {
     "audio_ducking": "Temporarily attenuate audio mixer channels via hotkey",
     "peer_chat": "Send and receive encrypted backstage messages with connected directors",
     "network": "Connect to external web alert bridges or webhooks",
+    "chat_read": "Listen to incoming viewer chat messages and !commands",
+    "chat_send": "Send chat replies or results back to live stream chat",
+    "channel_points": "Listen to Twitch Channel Points custom reward redemptions",
+    "bits": "Listen to Twitch Bits / Cheer events",
 }
 
 
@@ -132,12 +136,68 @@ class CalyxAPI:
             return False
 
     def on_event(self, event_name: str, callback: Callable[[Any], None]) -> bool:
-        if not self.has_permission("broadcast_events"):
-            self.log(f"Permission denied: broadcast_events ({event_name})")
+        perm_map = {
+            "chat_message": ("chat_read", "broadcast_events"),
+            "channel_points": ("channel_points", "broadcast_events"),
+            "bits": ("bits", "broadcast_events"),
+        }
+        needed = perm_map.get(event_name, ("broadcast_events",))
+        if not any(self.has_permission(p) for p in needed):
+            self.log(f"Permission denied: {needed[0]} ({event_name})")
             return False
         self._manager.subscribe_event(self.plugin_id, event_name, callback)
         self._event_subs.append((event_name, callback))
         return True
+
+    def on_command(self, command: str, callback: Callable[[Dict[str, Any]], None]) -> bool:
+        """Subscribe to a standardized chat command (e.g. '!slots') across all active platforms."""
+        if not (self.has_permission("chat_read") or self.has_permission("broadcast_events")):
+            self.log(f"Permission denied: chat_read ({command})")
+            return False
+        cmd_norm = str(command or "").strip().lower()
+        if not cmd_norm:
+            return False
+        if not cmd_norm.startswith("!"):
+            cmd_norm = "!" + cmd_norm
+        self._manager.subscribe_command(self.plugin_id, cmd_norm, callback)
+        return True
+
+    def send_chat_message(self, text: str, platform: str = "twitch") -> bool:
+        """Send a reply back to stream chat (Twitch Helix / MultiPlatformGateway)."""
+        if not self.has_permission("chat_send"):
+            self.log("Permission denied: chat_send")
+            return False
+        msg = str(text or "").strip()
+        if not msg or not self._overlay:
+            return False
+        try:
+            plat = str(platform or "twitch").lower()
+            if plat == "twitch" and hasattr(self._overlay, "dispatch_twitch_call"):
+                self._overlay.dispatch_twitch_call("/chat", msg[:500])
+                return True
+            gw = getattr(self._overlay, "platform_gateway", None)
+            if gw and hasattr(gw, "dispatch_announcement"):
+                gw.dispatch_announcement(msg[:500])
+                return True
+        except Exception as e:
+            self._manager._record_plugin_error(self.plugin_id, f"send_chat_message: {e}")
+        return False
+
+    def get_platform_capabilities(self) -> Dict[str, Any]:
+        """Returns linked account capability flags (e.g. Twitch Affiliate/Partner Channel Points check)."""
+        ov = self._overlay
+        btype = str(getattr(ov, "twitch_broadcaster_type", "") or "").lower() if ov else ""
+        tw_linked = bool(ov and getattr(ov, "twitch_token", "") and getattr(ov, "twitch_channel", ""))
+        monetized = btype in ("affiliate", "partner")
+        return {
+            "twitch": {
+                "linked": tw_linked,
+                "broadcaster_type": btype or "standard",
+                "chat": tw_linked,
+                "channel_points": tw_linked and monetized,
+                "bits": tw_linked and monetized,
+            }
+        }
 
     def register_hotkey(self, hotkey_str: str, callback: Callable[[], None]) -> bool:
         if not self.has_permission("hotkeys"):
@@ -322,6 +382,7 @@ class PluginManager(QObject):
         self._registry: Dict[str, Dict[str, Any]] = {}  # plugin_id -> {manifest, builtin, path, enabled, instance, api, widget}
         self._enabled_state: Dict[str, bool] = {}
         self._event_listeners: Dict[str, List[Tuple[str, Callable]]] = {}
+        self._command_listeners: Dict[str, List[Tuple[str, Callable]]] = {}
         self._hotkey_hooks: Dict[str, List[Any]] = {}
         self._errors: Dict[str, str] = {}
         self._settings_window: Any = None
@@ -477,9 +538,11 @@ class PluginManager(QObject):
         info = self._registry.get(plugin_id)
         if not info:
             return
-        # Remove event subscriptions & hotkeys
+        # Remove event subscriptions, command handlers & hotkeys
         for ev, subs in list(self._event_listeners.items()):
             self._event_listeners[ev] = [(pid, cb) for pid, cb in subs if pid != plugin_id]
+        for cmd, subs in list(self._command_listeners.items()):
+            self._command_listeners[cmd] = [(pid, cb) for pid, cb in subs if pid != plugin_id]
         for hk in self._hotkey_hooks.pop(plugin_id, []):
             try:
                 import keyboard
@@ -591,6 +654,20 @@ class PluginManager(QObject):
     def subscribe_event(self, plugin_id: str, event_name: str, callback: Callable[[Any], None]):
         subs = self._event_listeners.setdefault(event_name, [])
         subs.append((plugin_id, callback))
+
+    def subscribe_command(self, plugin_id: str, command: str, callback: Callable[[Dict[str, Any]], None]):
+        subs = self._command_listeners.setdefault(command.lower().strip(), [])
+        subs.append((plugin_id, callback))
+
+    def dispatch_chat_message(self, payload: Dict[str, Any]):
+        self.dispatch_event("chat_message", payload)
+        cmd = str(payload.get("command", "") or "").lower().strip()
+        if cmd:
+            for pid, cb in list(self._command_listeners.get(cmd, [])):
+                try:
+                    cb(payload)
+                except Exception as e:
+                    self._record_plugin_error(pid, f"command '{cmd}': {e}")
 
     def dispatch_event(self, event_name: str, payload: Any = None):
         for pid, cb in list(self._event_listeners.get(event_name, [])):

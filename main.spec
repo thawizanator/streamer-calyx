@@ -49,6 +49,7 @@ hidden_imports = [
     'plugin_engine',
     'builtin_plugins',
     'plugins_tab',
+    'twitch_eventsub',
 ] + collect_submodules('aiortc') + collect_submodules('aioice')
 
 excluded_modules = [

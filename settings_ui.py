@@ -87,6 +87,30 @@ def fetch_twitch_user_info(token, client_id):
         return None, None, None
 
 
+def fetch_twitch_broadcaster_type(token, client_id, login="") -> str:
+    """
+    Returns Twitch broadcaster_type ('partner', 'affiliate', or '') so Calyx
+    can safely guard Channel Points & Bits EventSub subscriptions.
+    """
+    if not token or not client_id:
+        return ""
+    try:
+        q = f"?login={urllib.parse.quote(login)}" if login else ""
+        user_url = f"https://api.twitch.tv/helix/users{q}"
+        req = urllib.request.Request(user_url, headers={
+            "Client-ID": client_id,
+            "Authorization": f"Bearer {token}",
+        })
+        with urllib.request.urlopen(req, timeout=8) as res:
+            data = json.loads(res.read().decode("utf-8"))
+            users = data.get("data", [])
+            if users:
+                return str(users[0].get("broadcaster_type", "") or "").strip().lower()
+    except Exception:
+        pass
+    return ""
+
+
 class TwitchAuthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         # Ignore favicon requests cleanly without interrupting OAuth flow
@@ -237,7 +261,7 @@ class TwitchAuthWorker(QThread):
             server.worker = self
             server.timeout = 0.5
 
-            scopes = "channel:manage:broadcast+moderator:manage:announcements+moderator:manage:shoutouts+user:write:chat+user:read:chat"
+            scopes = "channel:manage:broadcast+moderator:manage:announcements+moderator:manage:shoutouts+user:write:chat+user:read:chat+channel:read:redemptions+channel:manage:redemptions+bits:read"
             encoded_redirect = urllib.parse.quote(self.redirect_uri, safe="")
             auth_url = f"https://id.twitch.tv/oauth2/authorize?client_id={self.client_id}&redirect_uri={encoded_redirect}&response_type=token&scope={scopes}&force_verify=true"
 
@@ -982,6 +1006,11 @@ class TwitchTab(QWidget):
                 info_text += f" (@{login})"
             if user_id:
                 info_text += f" <span style='color: gray;'>(ID: {user_id})</span>"
+            btype = str(getattr(self.main_win.overlay, "twitch_broadcaster_type", "") or "").strip().lower()
+            if btype in ("affiliate", "partner"):
+                info_text += f" <span style='color: #a855f7; font-size: 11px;'>[{btype.capitalize()} • Channel Points &amp; Bits Ready]</span>"
+            elif btype == "standard":
+                info_text += " <span style='color: #9ca3af; font-size: 11px;'>[Standard • Chat Ready]</span>"
             self.lbl_status.setText(info_text)
             self.btn_login.setText("🔄 Re-link Account")
             self.btn_login.setStyleSheet("background-color: #2e6930; color: white; font-weight: bold; padding: 3px 10px; border-radius: 4px;")
@@ -1016,6 +1045,7 @@ class TwitchTab(QWidget):
         self.btn_login.setEnabled(True)
         client_id_str = str(self.main_win.overlay.twitch_client_id).strip()
         login, user_id, display_name = fetch_twitch_user_info(token, client_id_str)
+        btype = fetch_twitch_broadcaster_type(token, client_id_str, login or "") or "standard"
 
         if not login:
             login = self.txt_channel.text().strip() or getattr(self.main_win.overlay, "twitch_channel", "")
@@ -1024,6 +1054,7 @@ class TwitchTab(QWidget):
         self.main_win.overlay.twitch_token = token
         self.main_win.overlay.twitch_login = login or ""
         self.main_win.overlay.twitch_display_name = display_name or login or ""
+        self.main_win.overlay.twitch_broadcaster_type = "" if btype == "standard" else btype
         if user_id:
             self.main_win.overlay.twitch_user_id = str(user_id)
 
@@ -1038,6 +1069,8 @@ class TwitchTab(QWidget):
 
         self.update_connection_ui()
         self.main_win.overlay.save_settings()
+        if hasattr(self.main_win.overlay, "start_twitch_eventsub"):
+            self.main_win.overlay.start_twitch_eventsub()
 
         handle_note = f" (@{login})" if login and display_name and login.lower() != display_name.lower() else ""
         QMessageBox.information(
@@ -1062,7 +1095,10 @@ class TwitchTab(QWidget):
             self.main_win.overlay.twitch_login = ""
             self.main_win.overlay.twitch_display_name = ""
             self.main_win.overlay.twitch_user_id = ""
+            self.main_win.overlay.twitch_broadcaster_type = ""
             self.main_win.overlay.save_settings()
+            if hasattr(self.main_win.overlay, "twitch_eventsub") and self.main_win.overlay.twitch_eventsub:
+                self.main_win.overlay.twitch_eventsub.stop()
             self.update_connection_ui()
             QMessageBox.information(self, "Disconnected", "Twitch account unlinked successfully.")
 

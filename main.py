@@ -531,6 +531,11 @@ class RedBorderOverlay(QMainWindow):
         self.platform_gateway = MultiPlatformGateway(overlay=self, parent=self)
         from plugin_engine import PluginManager
         self.plugin_manager = PluginManager(overlay=self, parent=self)
+        from twitch_eventsub import TwitchEventSubClient
+        self.twitch_eventsub = TwitchEventSubClient(parent=self)
+        self.twitch_eventsub.chat_message_received.connect(self.plugin_manager.dispatch_chat_message)
+        self.twitch_eventsub.channel_points_redeemed.connect(lambda p: self.plugin_manager.dispatch_event("channel_points", p))
+        self.twitch_eventsub.bits_cheered.connect(lambda p: self.plugin_manager.dispatch_event("bits", p))
         if slobs_cli:
             slobs_cli.scene_switched.connect(lambda _id, name: self.ifttt_engine.fire_trigger("scene_switched", name))
             if hasattr(slobs_cli, "streaming_status_changed"):
@@ -546,6 +551,8 @@ class RedBorderOverlay(QMainWindow):
         self.input_manager = InputManager(overlay=self, parent=self)
         self.input_manager.trigger_action.connect(self._handle_input_action)
         self.load_settings()
+        if self.twitch_token and self.twitch_user_id:
+            QTimer.singleShot(1500, self.start_twitch_eventsub)
 
         # Install UI action telemetry event filter on application
         try:
@@ -665,6 +672,7 @@ class RedBorderOverlay(QMainWindow):
         self.twitch_redirect_uri = "http://localhost:17563"
         self.twitch_user_id = ""
         self.twitch_display_name = ""
+        self.twitch_broadcaster_type = ""
         self.twitch_token = ""
         self.twitch_macros = []
         self.director_settings = {}
@@ -720,6 +728,7 @@ class RedBorderOverlay(QMainWindow):
                     self.twitch_redirect_uri = d.get("twitch_redirect_uri", "http://localhost:17563")
                     self.twitch_user_id = str(d.get("twitch_user_id", ""))
                     self.twitch_display_name = d.get("twitch_display_name", "")
+                    self.twitch_broadcaster_type = d.get("twitch_broadcaster_type", "")
                     self.twitch_token = obfuscate(d.get("twitch_token_obf", ""))
                     self.twitch_macros = d.get("twitch_macros", [])
                     if not self.twitch_channel and (self.twitch_login or self.twitch_display_name):
@@ -785,6 +794,7 @@ class RedBorderOverlay(QMainWindow):
             "twitch_redirect_uri": self.twitch_redirect_uri,
             "twitch_user_id": self.twitch_user_id,
             "twitch_display_name": self.twitch_display_name,
+            "twitch_broadcaster_type": getattr(self, "twitch_broadcaster_type", ""),
             "twitch_token_obf": obfuscate(self.twitch_token),
             "twitch_macros": self.twitch_macros,
             "beta_telemetry_acknowledged": getattr(self, "beta_telemetry_acknowledged", False),
@@ -1160,6 +1170,31 @@ class RedBorderOverlay(QMainWindow):
                 self.modal_ui.exec()
         else:
             self.dispatch_twitch_call(cmd, "")
+
+    def start_twitch_eventsub(self):
+        if not getattr(self, "twitch_eventsub", None):
+            return
+        if not self.twitch_token or not self.twitch_user_id:
+            return
+        # If broadcaster_type wasn't cached yet, fetch it once from Helix before subscribing
+        if not getattr(self, "twitch_broadcaster_type", ""):
+            try:
+                from settings_ui import fetch_twitch_broadcaster_type
+                btype = fetch_twitch_broadcaster_type(self.twitch_token, self.twitch_client_id, self.twitch_login or self.twitch_channel)
+                if btype:
+                    self.twitch_broadcaster_type = btype
+                    self.save_settings()
+            except Exception:
+                pass
+        self.twitch_eventsub.configure(
+            token=self.twitch_token,
+            client_id=self.twitch_client_id,
+            broadcaster_id=self.twitch_user_id,
+            user_id=self.twitch_user_id,
+            channel=self.twitch_channel,
+            broadcaster_type=getattr(self, "twitch_broadcaster_type", ""),
+        )
+        self.twitch_eventsub.start()
 
     def dispatch_twitch_call(self, command, argument):
         log_debug("TWITCH", f"Dispatching command='{command}', argument='{argument}' (channel='{self.twitch_channel}', user_id='{self.twitch_user_id}')")
