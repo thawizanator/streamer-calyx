@@ -96,7 +96,7 @@ CORE_PLUGIN_CATALOG: List[Dict[str, Any]] = [
     {
         "id": "calyx.streamelements",
         "name": "StreamElements",
-        "version": "1.0.0",
+        "version": "1.0.1",
         "author": "Streamer Calyx",
         "date": "2026-11-24",
         "signed": True,
