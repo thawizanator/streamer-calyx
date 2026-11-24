@@ -1,0 +1,67 @@
+[
+  {
+    "id": "calyx.ending_credits",
+    "name": "Ending Credits",
+    "version": "1.0.0",
+    "author": "Streamer Calyx",
+    "date": "2026-11-24",
+    "signed": true,
+    "description": "Customizable movie-style rolling credits scroller & OBS Browser Source HTML exporter.",
+    "category": "OVERLAY & DISPLAY",
+    "icon": "🎬",
+    "permissions": ["overlay_toast", "config_storage"],
+    "download_url": "https://raw.githubusercontent.com/thawizanator/streamer-calyx/develop/plugins/calyx.ending_credits.calyxplugin"
+  },
+  {
+    "id": "calyx.teleprompter",
+    "name": "Backstage Teleprompter",
+    "version": "1.1.0",
+    "author": "Streamer Calyx",
+    "date": "2026-11-24",
+    "signed": true,
+    "description": "Live teleprompter with smooth scrolling, custom fonts/colors, mirror mode for glass, fullscreen window, and HTML export.",
+    "category": "STREAM TOOLS",
+    "icon": "📜",
+    "permissions": ["overlay_toast", "config_storage"],
+    "download_url": "https://raw.githubusercontent.com/thawizanator/streamer-calyx/develop/plugins/calyx.teleprompter.calyxplugin"
+  },
+  {
+    "id": "calyx.backstage_chat",
+    "name": "Encrypted Peer Chat",
+    "version": "1.0.0",
+    "author": "Streamer Calyx",
+    "date": "2026-11-24",
+    "signed": true,
+    "description": "End-to-end encrypted backstage text chat between streamer and remote directors.",
+    "category": "PLUGINS",
+    "icon": "🔐",
+    "permissions": ["config_storage", "peer_chat", "broadcast_events"],
+    "download_url": "https://raw.githubusercontent.com/thawizanator/streamer-calyx/develop/plugins/calyx.backstage_chat.calyxplugin"
+  },
+  {
+    "id": "calyx.streamelements",
+    "name": "StreamElements",
+    "version": "1.0.0",
+    "author": "Streamer Calyx",
+    "date": "2026-11-24",
+    "signed": true,
+    "description": "Connects StreamElements Loyalty Points, real-time alerts, activity feed, and bot chat with permission-controlled plugin access.",
+    "category": "STREAM TOOLS",
+    "icon": "⚡",
+    "permissions": ["overlay_toast", "config_storage", "network", "broadcast_events", "service_provider"],
+    "download_url": "https://raw.githubusercontent.com/thawizanator/streamer-calyx/develop/plugins/calyx.streamelements.calyxplugin"
+  },
+  {
+    "id": "calyx.streamlabs",
+    "name": "Streamlabs",
+    "version": "1.0.0",
+    "author": "Streamer Calyx",
+    "date": "2026-11-24",
+    "signed": true,
+    "description": "Connects Streamlabs Loyalty Points, Socket API real-time donations/merch alerts, and custom alerts with permission-controlled plugin access.",
+    "category": "STREAM TOOLS",
+    "icon": "🟢",
+    "permissions": ["overlay_toast", "config_storage", "network", "broadcast_events", "service_provider"],
+    "download_url": "https://raw.githubusercontent.com/thawizanator/streamer-calyx/develop/plugins/calyx.streamlabs.calyxplugin"
+  }
+]

@@ -28,15 +28,13 @@ def run_tests():
         ov = DummyOverlay()
         pm = PluginManager(overlay=ov, plugins_dir=plugins_dir)
 
-        # 1. Verify remaining built-in plugins & downloadable core catalog
+        # 1. Verify devos_slots & audio_ducking removed and 5 downloadable core plugins in catalog
         listed = pm.list_plugins()
         ids = {p["id"] for p in listed}
-        expected_ids = {
-            "calyx.devos_slots",
-            "calyx.audio_ducking",
-        }
-        assert expected_ids.issubset(ids), f"Missing built-in plugins: {expected_ids - ids}"
-        catalog_ids = {c["id"] for c in pm.list_core_catalog()}
+        assert "calyx.devos_slots" not in ids
+        assert "calyx.audio_ducking" not in ids
+        catalog = pm.list_core_catalog()
+        catalog_ids = {c["id"] for c in catalog}
         assert {
             "calyx.ending_credits",
             "calyx.teleprompter",
@@ -44,6 +42,7 @@ def run_tests():
             "calyx.streamelements",
             "calyx.streamlabs",
         }.issubset(catalog_ids)
+        assert all("date" in c and "signed" in c for c in catalog)
 
         pm.load_all_enabled()
         for p in pm.list_plugins():
@@ -85,14 +84,17 @@ def run_tests():
         assert ok_u
         assert not any(p["id"] == "dev.test_addon" for p in pm.list_plugins())
 
-        # 5. PluginsTab UI instantiation (including Core Catalog)
+        # 5. PluginsTab UI instantiation (including Core Catalog Spreadsheet)
         tab = PluginsTab(None, pm)
         assert tab.grp_list is not None
         assert tab.grp_catalog is not None
+        assert tab.tbl_catalog.columnCount() == 6
+        assert tab.tbl_catalog.rowCount() >= 5
 
         # 6. Cross-Plugin & Host Service Bus + Scoped Permissions checks
+        pm._registry["dev.consumer"] = {"manifest": {"id": "dev.consumer", "permissions": []}, "builtin": False, "enabled": True, "instance": None}
         pm.register_service(
-            "calyx.devos_slots",
+            "dev.provider",
             "streamelements",
             actions={
                 "get_points": lambda caller_id="", username="", **_: {"ok": True, "username": username, "points": 500},
@@ -102,7 +104,7 @@ def run_tests():
             policy={"allowed_scopes": {"loyalty_read": True, "loyalty_write": True}, "plugin_overrides": {}},
         )
         # Manifest permission missing -> denied
-        res_denied = pm.call_service("calyx.audio_ducking", "loyalty", "get_points", username="alice")
+        res_denied = pm.call_service("dev.consumer", "loyalty", "get_points", username="alice")
         assert res_denied["ok"] is False and "loyalty_read" in res_denied["error"]
 
         # Host access -> always allowed
@@ -110,23 +112,23 @@ def run_tests():
         assert res_host["ok"] is True and res_host["points"] == 500
 
         # Authorized plugin with manifest permissions -> allowed, then blocked by per-plugin override
-        pm._registry["calyx.audio_ducking"]["manifest"]["permissions"].extend(["loyalty_read", "loyalty_write"])
-        res_ok = pm.call_service("calyx.audio_ducking", "loyalty", "add_points", username="alice", amount=-50, reason="wager")
+        pm._registry["dev.consumer"]["manifest"]["permissions"].extend(["loyalty_read", "loyalty_write"])
+        res_ok = pm.call_service("dev.consumer", "loyalty", "add_points", username="alice", amount=-50, reason="wager")
         assert res_ok["ok"] is True and res_ok["points"] == 450
 
         pm.set_service_policy(
-            "calyx.devos_slots",
+            "dev.provider",
             "streamelements",
             {
                 "allowed_scopes": {"loyalty_read": True, "loyalty_write": True},
-                "plugin_overrides": {"calyx.audio_ducking": {"enabled": True, "scopes": {"loyalty_write": False}}},
+                "plugin_overrides": {"dev.consumer": {"enabled": True, "scopes": {"loyalty_write": False}}},
             },
         )
-        res_ro = pm.call_service("calyx.audio_ducking", "loyalty", "get_points", username="alice")
+        res_ro = pm.call_service("dev.consumer", "loyalty", "get_points", username="alice")
         assert res_ro["ok"] is True
-        res_blocked_write = pm.call_service("calyx.audio_ducking", "loyalty", "add_points", username="alice", amount=50)
+        res_blocked_write = pm.call_service("dev.consumer", "loyalty", "add_points", username="alice", amount=50)
         assert res_blocked_write["ok"] is False
-        pm.unregister_service("calyx.devos_slots", "streamelements")
+        pm.unregister_service("dev.provider", "streamelements")
 
         pm.stop()
         print("ALL PHASE 14 CHECKS PASSED!")

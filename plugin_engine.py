@@ -59,6 +59,8 @@ CORE_PLUGIN_CATALOG: List[Dict[str, Any]] = [
         "name": "Ending Credits",
         "version": "1.0.0",
         "author": "Streamer Calyx",
+        "date": "2026-11-24",
+        "signed": True,
         "description": "Customizable movie-style rolling credits scroller & OBS Browser Source HTML exporter.",
         "category": "OVERLAY & DISPLAY",
         "icon": "🎬",
@@ -70,6 +72,8 @@ CORE_PLUGIN_CATALOG: List[Dict[str, Any]] = [
         "name": "Backstage Teleprompter",
         "version": "1.1.0",
         "author": "Streamer Calyx",
+        "date": "2026-11-24",
+        "signed": True,
         "description": "Live teleprompter with smooth scrolling, custom fonts/colors, mirror mode for glass, fullscreen window, and HTML export.",
         "category": "STREAM TOOLS",
         "icon": "📜",
@@ -81,6 +85,8 @@ CORE_PLUGIN_CATALOG: List[Dict[str, Any]] = [
         "name": "Encrypted Peer Chat",
         "version": "1.0.0",
         "author": "Streamer Calyx",
+        "date": "2026-11-24",
+        "signed": True,
         "description": "End-to-end encrypted backstage text chat between streamer and remote directors.",
         "category": "PLUGINS",
         "icon": "🔐",
@@ -92,6 +98,8 @@ CORE_PLUGIN_CATALOG: List[Dict[str, Any]] = [
         "name": "StreamElements",
         "version": "1.0.0",
         "author": "Streamer Calyx",
+        "date": "2026-11-24",
+        "signed": True,
         "description": "Connects StreamElements Loyalty Points, real-time alerts, activity feed, and bot chat with permission-controlled plugin access.",
         "category": "STREAM TOOLS",
         "icon": "⚡",
@@ -103,6 +111,8 @@ CORE_PLUGIN_CATALOG: List[Dict[str, Any]] = [
         "name": "Streamlabs",
         "version": "1.0.0",
         "author": "Streamer Calyx",
+        "date": "2026-11-24",
+        "signed": True,
         "description": "Connects Streamlabs Loyalty Points, Socket API real-time donations/merch alerts, and custom alerts with permission-controlled plugin access.",
         "category": "STREAM TOOLS",
         "icon": "🟢",
@@ -508,6 +518,7 @@ class PluginManager(QObject):
     handles crash-isolated lifecycle, event routing, and dynamic UI injection.
     """
     plugins_changed = pyqtSignal()
+    catalog_updated = pyqtSignal()
     plugin_error = pyqtSignal(str, str)  # (plugin_id, error_msg)
     services_changed = pyqtSignal()
 
@@ -526,6 +537,7 @@ class PluginManager(QObject):
         self._services: Dict[str, Dict[str, Any]] = {}
         self._errors: Dict[str, str] = {}
         self._settings_window: Any = None
+        self._remote_catalog: List[Dict[str, Any]] = [dict(e) for e in CORE_PLUGIN_CATALOG]
 
         self._load_state()
         self._discover_builtin_plugins()
@@ -789,10 +801,34 @@ class PluginManager(QObject):
             })
         return out
 
+    def refresh_core_catalog_async(self):
+        """Fetches the latest plugins/catalog.json from GitHub in a background thread."""
+        import threading
+        import urllib.request
+
+        def _fetch():
+            urls = [
+                "https://raw.githubusercontent.com/thawizanator/streamer-calyx/develop/plugins/catalog.json",
+                "https://raw.githubusercontent.com/thawizanator/streamer-calyx/main/plugins/catalog.json",
+            ]
+            for url in urls:
+                try:
+                    req = urllib.request.Request(url, headers={"User-Agent": "StreamerCalyx-Catalog/1.0"})
+                    with urllib.request.urlopen(req, timeout=8) as resp:
+                        data = json.loads(resp.read().decode("utf-8"))
+                    if isinstance(data, list) and data:
+                        self._remote_catalog = data
+                        self.catalog_updated.emit()
+                        return
+                except Exception:
+                    continue
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
     def list_core_catalog(self) -> List[Dict[str, Any]]:
         """Returns the official downloadable core plugins with current install status."""
         out = []
-        for entry in CORE_PLUGIN_CATALOG:
+        for entry in self._remote_catalog:
             pid = entry["id"]
             installed_info = self._registry.get(pid)
             out.append({
@@ -808,7 +844,7 @@ class PluginManager(QObject):
         import urllib.error
         import urllib.request
 
-        entry = next((e for e in CORE_PLUGIN_CATALOG if e["id"] == plugin_id), None)
+        entry = next((e for e in self._remote_catalog if e["id"] == plugin_id), None)
         if not entry:
             return False, f"Unknown core plugin '{plugin_id}'."
         url = entry["download_url"]

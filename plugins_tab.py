@@ -9,18 +9,22 @@ from typing import Any, Dict
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QDialog,
     QFileDialog,
     QFrame,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -167,10 +171,39 @@ class PluginsTab(QWidget):
         self.list_lay.setSpacing(8)
         lay.addWidget(self.grp_list)
 
-        # 3. Official Core Plugins (On-Demand GitHub Download)
-        self.grp_catalog = QGroupBox("☁️ Official Core Plugins (Download on Demand)")
+        # 3. Official Core Plugins (On-Demand GitHub Catalog Spreadsheet)
+        self.grp_catalog = QGroupBox("☁️ Official Core Plugins (GitHub Catalog)")
         self.catalog_lay = QVBoxLayout(self.grp_catalog)
-        self.catalog_lay.setSpacing(8)
+        self.catalog_lay.setSpacing(6)
+
+        cat_hdr = QHBoxLayout()
+        lbl_cat_info = QLabel("Available official plugins fetched from GitHub. Click <b>Install</b> to download &amp; verify:")
+        lbl_cat_info.setWordWrap(True)
+        lbl_cat_info.setStyleSheet("font-size: 11px; opacity: 0.85;")
+        cat_hdr.addWidget(lbl_cat_info, 1)
+
+        self.btn_refresh_cat = QPushButton("🔄 Refresh from GitHub")
+        self.btn_refresh_cat.clicked.connect(self._on_refresh_github_catalog)
+        cat_hdr.addWidget(self.btn_refresh_cat)
+        self.catalog_lay.addLayout(cat_hdr)
+
+        self.tbl_catalog = QTableWidget(0, 6)
+        self.tbl_catalog.setHorizontalHeaderLabels(["Plugin Name", "Author", "Date", "Version", "Signed", "Action"])
+        self.tbl_catalog.setAlternatingRowColors(True)
+        self.tbl_catalog.setShowGrid(True)
+        self.tbl_catalog.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.tbl_catalog.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tbl_catalog.verticalHeader().setVisible(False)
+        self.tbl_catalog.setFixedHeight(220)
+        hdr = self.tbl_catalog.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
+        self.catalog_lay.addWidget(self.tbl_catalog)
+
         lay.addWidget(self.grp_catalog)
 
         # 4. Developer Kit & 1-Click Exporter (14.6)
@@ -198,6 +231,9 @@ class PluginsTab(QWidget):
         lay.addStretch()
 
         self.manager.plugins_changed.connect(self.refresh_list)
+        if hasattr(self.manager, "catalog_updated"):
+            self.manager.catalog_updated.connect(self.refresh_catalog)
+            self.manager.refresh_core_catalog_async()
         self.refresh_list()
 
     # ------------------------------------------------------------------
@@ -299,49 +335,58 @@ class PluginsTab(QWidget):
 
         self.refresh_catalog()
 
+    def _on_refresh_github_catalog(self):
+        if hasattr(self.btn_refresh_cat, "setEnabled"):
+            self.btn_refresh_cat.setEnabled(False)
+            self.btn_refresh_cat.setText("⏳ Checking GitHub...")
+        if hasattr(self.manager, "refresh_core_catalog_async"):
+            self.manager.refresh_core_catalog_async()
+        self.refresh_catalog()
+
     def refresh_catalog(self):
-        if not hasattr(self, "catalog_lay"):
+        if not hasattr(self, "tbl_catalog"):
             return
-        while self.catalog_lay.count():
-            item = self.catalog_lay.takeAt(0)
-            w = item.widget()
-            if w:
-                w.deleteLater()
+        if hasattr(self, "btn_refresh_cat"):
+            self.btn_refresh_cat.setEnabled(True)
+            self.btn_refresh_cat.setText("🔄 Refresh from GitHub")
 
-        available = [c for c in self.manager.list_core_catalog() if not c["installed"]]
-        if not available:
-            lbl_all = QLabel("✅ All official downloadable core plugins are installed.")
-            lbl_all.setStyleSheet("font-size: 11px; color: #34d399; font-weight: bold;")
-            self.catalog_lay.addWidget(lbl_all)
-            return
+        entries = self.manager.list_core_catalog()
+        self.tbl_catalog.setSortingEnabled(False)
+        self.tbl_catalog.setRowCount(len(entries))
 
-        for entry in available:
+        for row, entry in enumerate(entries):
             pid = entry["id"]
-            card = QFrame()
-            card.setStyleSheet("QFrame { border: 1px solid rgba(56,189,248,0.22); border-radius: 6px; padding: 6px; }")
-            c_lay = QVBoxLayout(card)
-            c_lay.setContentsMargins(8, 6, 8, 6)
-            c_lay.setSpacing(4)
+            name_item = QTableWidgetItem(f"{entry.get('icon', '🧩')} {entry.get('name', pid)}")
+            name_item.setToolTip(str(entry.get("description", "")))
+            author_item = QTableWidgetItem(str(entry.get("author", "Streamer Calyx")))
+            date_item = QTableWidgetItem(str(entry.get("date", "—")))
+            ver_item = QTableWidgetItem(f"v{entry.get('version', '1.0.0')}")
+            is_signed = bool(entry.get("signed", True))
+            signed_item = QTableWidgetItem("✅ SHA-256" if is_signed else "⚠️ Unsigned")
 
-            top = QHBoxLayout()
-            lbl = QLabel(f"<b>{entry['icon']} {entry['name']}</b>  v{entry['version']}")
-            lbl.setStyleSheet("border: none;")
-            top.addWidget(lbl, 1)
+            self.tbl_catalog.setItem(row, 0, name_item)
+            self.tbl_catalog.setItem(row, 1, author_item)
+            self.tbl_catalog.setItem(row, 2, date_item)
+            self.tbl_catalog.setItem(row, 3, ver_item)
+            self.tbl_catalog.setItem(row, 4, signed_item)
 
-            btn_dl = QPushButton("☁️ Download && Install")
-            btn_dl.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;")
-            if pid in self._dl_workers:
-                btn_dl.setEnabled(False)
-                btn_dl.setText("⏳ Downloading...")
-            btn_dl.clicked.connect(lambda _=False, item=entry, b=btn_dl: self._on_download_core(item, b))
-            top.addWidget(btn_dl)
-            c_lay.addLayout(top)
+            if entry.get("installed"):
+                lbl_inst = QLabel(" ✅ Installed ")
+                lbl_inst.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                lbl_inst.setStyleSheet("color: #34d399; font-weight: bold; font-size: 11px;")
+                self.tbl_catalog.setCellWidget(row, 5, lbl_inst)
+            else:
+                btn_dl = QPushButton("☁️ Install")
+                btn_dl.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; padding: 3px 10px; border-radius: 4px;")
+                if pid in self._dl_workers:
+                    btn_dl.setEnabled(False)
+                    btn_dl.setText("⏳ Downloading...")
+                btn_dl.clicked.connect(lambda _=False, item=entry, b=btn_dl: self._on_download_core(item, b))
+                self.tbl_catalog.setCellWidget(row, 5, btn_dl)
 
-            desc = QLabel(f"{entry['description']}  <i>({entry['category']})</i>")
-            desc.setWordWrap(True)
-            desc.setStyleSheet("font-size: 11px; opacity: 0.85; border: none;")
-            c_lay.addWidget(desc)
-            self.catalog_lay.addWidget(card)
+            self.tbl_catalog.setRowHeight(row, 30)
+
+        self.tbl_catalog.setSortingEnabled(True)
 
     def _on_download_core(self, entry: Dict[str, Any], btn: QPushButton):
         pid = entry["id"]
