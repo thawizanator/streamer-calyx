@@ -6,13 +6,13 @@ from PyQt6.QtWidgets import QApplication, QWidget
 app = QApplication.instance() or QApplication(sys.argv)
 
 from plugin_engine import (
+    CORE_PLUGIN_CATALOG,
     PluginManager,
     create_plugin_template,
     export_folder_as_calyxplugin,
     inspect_calyxplugin_archive,
 )
 from plugins_tab import PluginsTab, PluginPermissionDialog
-from builtin_plugins import _encrypt_chat_msg, _decrypt_chat_msg
 
 
 class DummyOverlay:
@@ -28,27 +28,26 @@ def run_tests():
         ov = DummyOverlay()
         pm = PluginManager(overlay=ov, plugins_dir=plugins_dir)
 
-        # 1. Verify all 6 first-party core plugins discovered & load cleanly
+        # 1. Verify remaining built-in plugins & downloadable core catalog
         listed = pm.list_plugins()
         ids = {p["id"] for p in listed}
         expected_ids = {
-            "calyx.ending_credits",
-            "calyx.teleprompter",
             "calyx.devos_slots",
-            "calyx.web_alerts_bridge",
-            "calyx.backstage_chat",
             "calyx.audio_ducking",
         }
         assert expected_ids.issubset(ids), f"Missing built-in plugins: {expected_ids - ids}"
+        catalog_ids = {c["id"] for c in pm.list_core_catalog()}
+        assert {
+            "calyx.ending_credits",
+            "calyx.teleprompter",
+            "calyx.backstage_chat",
+            "calyx.streamelements",
+            "calyx.streamlabs",
+        }.issubset(catalog_ids)
 
         pm.load_all_enabled()
         for p in pm.list_plugins():
             assert p["loaded"] is True, f"Plugin {p['id']} failed to load: {p['error']}"
-
-        # 2. Verify E2EE backstage chat encryption/decryption & tamper rejection
-        pkt = _encrypt_chat_msg("Go live in 5!", "secret-room")
-        assert _decrypt_chat_msg(pkt, "secret-room") == "Go live in 5!"
-        assert _decrypt_chat_msg(pkt, "wrong-key") is None
 
         # 3. Developer Kit: create template -> export .calyxplugin -> inspect -> install -> disable -> uninstall
         dev_src = os.path.join(tmp, "dev_sample")
@@ -86,9 +85,48 @@ def run_tests():
         assert ok_u
         assert not any(p["id"] == "dev.test_addon" for p in pm.list_plugins())
 
-        # 5. PluginsTab UI instantiation
+        # 5. PluginsTab UI instantiation (including Core Catalog)
         tab = PluginsTab(None, pm)
         assert tab.grp_list is not None
+        assert tab.grp_catalog is not None
+
+        # 6. Cross-Plugin & Host Service Bus + Scoped Permissions checks
+        pm.register_service(
+            "calyx.devos_slots",
+            "streamelements",
+            actions={
+                "get_points": lambda caller_id="", username="", **_: {"ok": True, "username": username, "points": 500},
+                "add_points": lambda caller_id="", username="", amount=0, reason="", **_: {"ok": True, "username": username, "points": 500 + int(amount)},
+            },
+            scope_map={"get_points": "loyalty_read", "add_points": "loyalty_write"},
+            policy={"allowed_scopes": {"loyalty_read": True, "loyalty_write": True}, "plugin_overrides": {}},
+        )
+        # Manifest permission missing -> denied
+        res_denied = pm.call_service("calyx.audio_ducking", "loyalty", "get_points", username="alice")
+        assert res_denied["ok"] is False and "loyalty_read" in res_denied["error"]
+
+        # Host access -> always allowed
+        res_host = pm.call_service_as_host("loyalty", "get_points", username="alice")
+        assert res_host["ok"] is True and res_host["points"] == 500
+
+        # Authorized plugin with manifest permissions -> allowed, then blocked by per-plugin override
+        pm._registry["calyx.audio_ducking"]["manifest"]["permissions"].extend(["loyalty_read", "loyalty_write"])
+        res_ok = pm.call_service("calyx.audio_ducking", "loyalty", "add_points", username="alice", amount=-50, reason="wager")
+        assert res_ok["ok"] is True and res_ok["points"] == 450
+
+        pm.set_service_policy(
+            "calyx.devos_slots",
+            "streamelements",
+            {
+                "allowed_scopes": {"loyalty_read": True, "loyalty_write": True},
+                "plugin_overrides": {"calyx.audio_ducking": {"enabled": True, "scopes": {"loyalty_write": False}}},
+            },
+        )
+        res_ro = pm.call_service("calyx.audio_ducking", "loyalty", "get_points", username="alice")
+        assert res_ro["ok"] is True
+        res_blocked_write = pm.call_service("calyx.audio_ducking", "loyalty", "add_points", username="alice", amount=50)
+        assert res_blocked_write["ok"] is False
+        pm.unregister_service("calyx.devos_slots", "streamelements")
 
         pm.stop()
         print("ALL PHASE 14 CHECKS PASSED!")

@@ -4,9 +4,10 @@ Phase 14.2 & 14.6 UI: 1-Click Plugin Manager, Permission Review Modal & Develope
 from __future__ import annotations
 
 import os
+import tempfile
 from typing import Any, Dict
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 from PyQt6.QtWidgets import (
     QCheckBox,
     QDialog,
@@ -31,6 +32,20 @@ from plugin_engine import (
     export_folder_as_calyxplugin,
     inspect_calyxplugin_archive,
 )
+
+
+class _CorePluginDownloadWorker(QThread):
+    finished_download = pyqtSignal(str, bool, str)  # (plugin_id, ok, path_or_err)
+
+    def __init__(self, manager: PluginManager, plugin_id: str, dest_path: str, parent=None):
+        super().__init__(parent)
+        self.manager = manager
+        self.plugin_id = plugin_id
+        self.dest_path = dest_path
+
+    def run(self):
+        ok, res = self.manager.download_core_plugin_archive(self.plugin_id, self.dest_path)
+        self.finished_download.emit(self.plugin_id, ok, res)
 
 
 class PluginPermissionDialog(QDialog):
@@ -100,6 +115,7 @@ class PluginsTab(QWidget):
         super().__init__()
         self.main_win = main_window
         self.manager = manager
+        self._dl_workers: Dict[str, _CorePluginDownloadWorker] = {}
         self.setAcceptDrops(True)
 
         root = QVBoxLayout(self)
@@ -146,12 +162,18 @@ class PluginsTab(QWidget):
         lay.addWidget(drop_box)
 
         # 2. Installed & First-Party Plugins List
-        self.grp_list = QGroupBox("Installed && First-Party Core Plugins")
+        self.grp_list = QGroupBox("Installed && Active Plugins")
         self.list_lay = QVBoxLayout(self.grp_list)
         self.list_lay.setSpacing(8)
         lay.addWidget(self.grp_list)
 
-        # 3. Developer Kit & 1-Click Exporter (14.6)
+        # 3. Official Core Plugins (On-Demand GitHub Download)
+        self.grp_catalog = QGroupBox("☁️ Official Core Plugins (Download on Demand)")
+        self.catalog_lay = QVBoxLayout(self.grp_catalog)
+        self.catalog_lay.setSpacing(8)
+        lay.addWidget(self.grp_catalog)
+
+        # 4. Developer Kit & 1-Click Exporter (14.6)
         grp_dev = QGroupBox("🛠️ Developer Kit && 1-Click Exporter")
         dev_lay = QVBoxLayout(grp_dev)
         dev_lay.setSpacing(6)
@@ -274,6 +296,98 @@ class PluginsTab(QWidget):
                 c_lay.addWidget(err_lbl)
 
             self.list_lay.addWidget(card)
+
+        self.refresh_catalog()
+
+    def refresh_catalog(self):
+        if not hasattr(self, "catalog_lay"):
+            return
+        while self.catalog_lay.count():
+            item = self.catalog_lay.takeAt(0)
+            w = item.widget()
+            if w:
+                w.deleteLater()
+
+        available = [c for c in self.manager.list_core_catalog() if not c["installed"]]
+        if not available:
+            lbl_all = QLabel("✅ All official downloadable core plugins are installed.")
+            lbl_all.setStyleSheet("font-size: 11px; color: #34d399; font-weight: bold;")
+            self.catalog_lay.addWidget(lbl_all)
+            return
+
+        for entry in available:
+            pid = entry["id"]
+            card = QFrame()
+            card.setStyleSheet("QFrame { border: 1px solid rgba(56,189,248,0.22); border-radius: 6px; padding: 6px; }")
+            c_lay = QVBoxLayout(card)
+            c_lay.setContentsMargins(8, 6, 8, 6)
+            c_lay.setSpacing(4)
+
+            top = QHBoxLayout()
+            lbl = QLabel(f"<b>{entry['icon']} {entry['name']}</b>  v{entry['version']}")
+            lbl.setStyleSheet("border: none;")
+            top.addWidget(lbl, 1)
+
+            btn_dl = QPushButton("☁️ Download && Install")
+            btn_dl.setStyleSheet("background-color: #0284c7; color: white; font-weight: bold; padding: 4px 10px; border-radius: 4px;")
+            if pid in self._dl_workers:
+                btn_dl.setEnabled(False)
+                btn_dl.setText("⏳ Downloading...")
+            btn_dl.clicked.connect(lambda _=False, item=entry, b=btn_dl: self._on_download_core(item, b))
+            top.addWidget(btn_dl)
+            c_lay.addLayout(top)
+
+            desc = QLabel(f"{entry['description']}  <i>({entry['category']})</i>")
+            desc.setWordWrap(True)
+            desc.setStyleSheet("font-size: 11px; opacity: 0.85; border: none;")
+            c_lay.addWidget(desc)
+            self.catalog_lay.addWidget(card)
+
+    def _on_download_core(self, entry: Dict[str, Any], btn: QPushButton):
+        pid = entry["id"]
+        if pid in self._dl_workers:
+            return
+        manifest = {**entry, "_has_checksum": True}
+        dlg = PluginPermissionDialog(manifest, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        tmp_dir = tempfile.mkdtemp(prefix="calyx_dl_")
+        dest_path = os.path.join(tmp_dir, f"{pid}.calyxplugin")
+        btn.setEnabled(False)
+        btn.setText("⏳ Downloading...")
+
+        worker = _CorePluginDownloadWorker(self.manager, pid, dest_path, parent=self)
+        self._dl_workers[pid] = worker
+
+        def _done(done_pid: str, ok: bool, res: str):
+            self._dl_workers.pop(done_pid, None)
+            if ok:
+                inst_ok, inst_msg = self.manager.install_calyxplugin(res)
+                try:
+                    os.remove(res)
+                    os.rmdir(tmp_dir)
+                except Exception:
+                    pass
+                if inst_ok:
+                    QMessageBox.information(self, "Core Plugin Installed", inst_msg)
+                else:
+                    QMessageBox.warning(self, "Install Notice", inst_msg)
+            else:
+                try:
+                    os.rmdir(tmp_dir)
+                except Exception:
+                    pass
+                QMessageBox.warning(
+                    self,
+                    "Download Failed",
+                    f"Could not download {entry['name']} from GitHub:\n{res}\n\n"
+                    "You can also drag & drop or use 'Install .calyxplugin...' for a local file.",
+                )
+            self.refresh_list()
+
+        worker.finished_download.connect(_done)
+        worker.start()
 
     def _open_plugin_page(self, plugin_id: str):
         if hasattr(self.main_win, "focus_plugin_page"):

@@ -44,7 +44,72 @@ PERMISSION_DESCRIPTIONS: Dict[str, str] = {
     "chat_send": "Send chat replies or results back to live stream chat",
     "channel_points": "Listen to Twitch Channel Points custom reward redemptions",
     "bits": "Listen to Twitch Bits / Cheer events",
+    "service_provider": "Register shared data & action services for Calyx and authorized plugins",
+    "loyalty_read": "Read viewer loyalty points, ranks, and leaderboards from connected services",
+    "loyalty_write": "Add, deduct, or modify viewer loyalty points on connected services",
+    "alerts_read": "Read recent tips, donations, store redemptions, and alert events",
+    "bot_say": "Send messages through connected StreamElements / Streamlabs bots",
 }
+
+CORE_PLUGIN_BASE_URL = "https://raw.githubusercontent.com/thawizanator/streamer-calyx/main/plugins"
+
+CORE_PLUGIN_CATALOG: List[Dict[str, Any]] = [
+    {
+        "id": "calyx.ending_credits",
+        "name": "Ending Credits",
+        "version": "1.0.0",
+        "author": "Streamer Calyx",
+        "description": "Customizable movie-style rolling credits scroller & OBS Browser Source HTML exporter.",
+        "category": "OVERLAY & DISPLAY",
+        "icon": "🎬",
+        "permissions": ["overlay_toast", "config_storage"],
+        "download_url": f"{CORE_PLUGIN_BASE_URL}/calyx.ending_credits.calyxplugin",
+    },
+    {
+        "id": "calyx.teleprompter",
+        "name": "Backstage Teleprompter",
+        "version": "1.1.0",
+        "author": "Streamer Calyx",
+        "description": "Live teleprompter with smooth scrolling, custom fonts/colors, mirror mode for glass, fullscreen window, and HTML export.",
+        "category": "STREAM TOOLS",
+        "icon": "📜",
+        "permissions": ["overlay_toast", "config_storage"],
+        "download_url": f"{CORE_PLUGIN_BASE_URL}/calyx.teleprompter.calyxplugin",
+    },
+    {
+        "id": "calyx.backstage_chat",
+        "name": "Encrypted Peer Chat",
+        "version": "1.0.0",
+        "author": "Streamer Calyx",
+        "description": "End-to-end encrypted backstage text chat between streamer and remote directors.",
+        "category": "PLUGINS",
+        "icon": "🔐",
+        "permissions": ["config_storage", "peer_chat", "broadcast_events"],
+        "download_url": f"{CORE_PLUGIN_BASE_URL}/calyx.backstage_chat.calyxplugin",
+    },
+    {
+        "id": "calyx.streamelements",
+        "name": "StreamElements",
+        "version": "1.0.0",
+        "author": "Streamer Calyx",
+        "description": "Connects StreamElements Loyalty Points, real-time alerts, activity feed, and bot chat with permission-controlled plugin access.",
+        "category": "STREAM TOOLS",
+        "icon": "⚡",
+        "permissions": ["overlay_toast", "config_storage", "network", "broadcast_events", "service_provider"],
+        "download_url": f"{CORE_PLUGIN_BASE_URL}/calyx.streamelements.calyxplugin",
+    },
+    {
+        "id": "calyx.streamlabs",
+        "name": "Streamlabs",
+        "version": "1.0.0",
+        "author": "Streamer Calyx",
+        "description": "Connects Streamlabs Loyalty Points, Socket API real-time donations/merch alerts, and custom alerts with permission-controlled plugin access.",
+        "category": "STREAM TOOLS",
+        "icon": "🟢",
+        "permissions": ["overlay_toast", "config_storage", "network", "broadcast_events", "service_provider"],
+        "download_url": f"{CORE_PLUGIN_BASE_URL}/calyx.streamlabs.calyxplugin",
+    },
+]
 
 
 class CalyxPluginBase:
@@ -217,6 +282,79 @@ class CalyxAPI:
     def get_overlay(self) -> Any:
         return self._overlay
 
+    # ------------------------------------------------------------------
+    # Cross-Plugin & Host Service Bus (Scoped Permissions)
+    # ------------------------------------------------------------------
+    def dispatch_event(self, event_name: str, payload: Any = None) -> bool:
+        if not self.has_permission("broadcast_events"):
+            self.log(f"Permission denied: broadcast_events ({event_name})")
+            return False
+        self._manager.dispatch_event(event_name, payload)
+        return True
+
+    def register_service(
+        self,
+        service_name: str,
+        actions: Dict[str, Callable[..., Any]],
+        scope_map: Optional[Dict[str, str]] = None,
+        policy: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        if not self.has_permission("service_provider"):
+            self.log(f"Permission denied: service_provider ({service_name})")
+            return False
+        return self._manager.register_service(
+            self.plugin_id,
+            service_name,
+            actions,
+            scope_map=scope_map,
+            policy=policy,
+        )
+
+    def unregister_service(self, service_name: Optional[str] = None) -> None:
+        self._manager.unregister_service(self.plugin_id, service_name)
+
+    def set_service_policy(self, service_name: str, policy: Dict[str, Any]) -> bool:
+        if not self.has_permission("service_provider"):
+            return False
+        return self._manager.set_service_policy(self.plugin_id, service_name, policy)
+
+    def get_service_policy(self, service_name: str) -> Dict[str, Any]:
+        return self._manager.get_service_policy(service_name)
+
+    def call_service(self, service_name: str, action: str, **kwargs: Any) -> Dict[str, Any]:
+        return self._manager.call_service(self.plugin_id, service_name, action, **kwargs)
+
+    def list_services(self) -> List[Dict[str, Any]]:
+        return self._manager.list_services()
+
+    def list_installed_plugins(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "id": p["id"],
+                "name": p["name"],
+                "icon": p["icon"],
+                "enabled": p["enabled"],
+                "loaded": p["loaded"],
+                "permissions": list(p.get("permissions", [])),
+            }
+            for p in self._manager.list_plugins()
+            if p["id"] != self.plugin_id
+        ]
+
+    def get_viewer_points(self, username: str, provider: str = "auto") -> Dict[str, Any]:
+        svc = "loyalty" if provider in ("", "auto", None) else str(provider)
+        return self.call_service(svc, "get_points", username=username)
+
+    def modify_viewer_points(
+        self,
+        username: str,
+        delta: int,
+        reason: str = "",
+        provider: str = "auto",
+    ) -> Dict[str, Any]:
+        svc = "loyalty" if provider in ("", "auto", None) else str(provider)
+        return self.call_service(svc, "add_points", username=username, amount=int(delta), reason=reason)
+
 
 def validate_manifest(manifest: Any) -> Tuple[bool, str]:
     if not isinstance(manifest, dict):
@@ -371,6 +509,7 @@ class PluginManager(QObject):
     """
     plugins_changed = pyqtSignal()
     plugin_error = pyqtSignal(str, str)  # (plugin_id, error_msg)
+    services_changed = pyqtSignal()
 
     def __init__(self, overlay: Any = None, plugins_dir: str = PLUGINS_ROOT_DIR, parent=None):
         super().__init__(parent)
@@ -384,6 +523,7 @@ class PluginManager(QObject):
         self._event_listeners: Dict[str, List[Tuple[str, Callable]]] = {}
         self._command_listeners: Dict[str, List[Tuple[str, Callable]]] = {}
         self._hotkey_hooks: Dict[str, List[Any]] = {}
+        self._services: Dict[str, Dict[str, Any]] = {}
         self._errors: Dict[str, str] = {}
         self._settings_window: Any = None
 
@@ -538,7 +678,8 @@ class PluginManager(QObject):
         info = self._registry.get(plugin_id)
         if not info:
             return
-        # Remove event subscriptions, command handlers & hotkeys
+        # Remove event subscriptions, command handlers, services & hotkeys
+        self.unregister_service(plugin_id)
         for ev, subs in list(self._event_listeners.items()):
             self._event_listeners[ev] = [(pid, cb) for pid, cb in subs if pid != plugin_id]
         for cmd, subs in list(self._command_listeners.items()):
@@ -648,6 +789,73 @@ class PluginManager(QObject):
             })
         return out
 
+    def list_core_catalog(self) -> List[Dict[str, Any]]:
+        """Returns the official downloadable core plugins with current install status."""
+        out = []
+        for entry in CORE_PLUGIN_CATALOG:
+            pid = entry["id"]
+            installed_info = self._registry.get(pid)
+            out.append({
+                **entry,
+                "installed": installed_info is not None,
+                "enabled": bool(installed_info["enabled"]) if installed_info else False,
+                "loaded": bool(installed_info and installed_info["instance"] is not None),
+            })
+        return out
+
+    def download_core_plugin_archive(self, plugin_id: str, dest_path: str) -> Tuple[bool, str]:
+        """Downloads a core .calyxplugin package from GitHub and verifies its SHA-256 manifest."""
+        import urllib.error
+        import urllib.request
+
+        entry = next((e for e in CORE_PLUGIN_CATALOG if e["id"] == plugin_id), None)
+        if not entry:
+            return False, f"Unknown core plugin '{plugin_id}'."
+        url = entry["download_url"]
+        urls_to_try = [url]
+        if "/main/plugins/" in url:
+            urls_to_try.append(url.replace("/main/plugins/", "/develop/plugins/"))
+        last_err = ""
+        data = b""
+        for candidate_url in urls_to_try:
+            try:
+                req = urllib.request.Request(candidate_url, headers={"User-Agent": "StreamerCalyx-PluginDownloader/1.0"})
+                with urllib.request.urlopen(req, timeout=20) as resp:
+                    data = resp.read()
+                if data:
+                    break
+            except urllib.error.HTTPError as e:
+                last_err = f"HTTP {e.code} fetching {candidate_url}"
+            except Exception as e:
+                last_err = f"Download failed: {e}"
+        if not data:
+            return False, last_err or "Downloaded archive is empty."
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(dest_path)), exist_ok=True)
+            with open(dest_path, "wb") as f:
+                f.write(data)
+            ok, _manifest, msg = inspect_calyxplugin_archive(dest_path)
+            if not ok:
+                try:
+                    os.remove(dest_path)
+                except Exception:
+                    pass
+                return False, f"Downloaded archive failed verification: {msg}"
+            return True, dest_path
+        except Exception as e:
+            return False, f"Download failed: {e}"
+
+    def download_and_install_core_plugin(self, plugin_id: str) -> Tuple[bool, str]:
+        """Synchronously downloads, verifies, and installs a core plugin."""
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_pkg = os.path.join(tmp, f"{plugin_id}.calyxplugin")
+            ok, msg = self.download_core_plugin_archive(plugin_id, tmp_pkg)
+            if not ok:
+                return False, msg
+            return self.install_calyxplugin(tmp_pkg)
+
     # ------------------------------------------------------------------
     # Crash-Isolated Event & Hotkey Dispatch
     # ------------------------------------------------------------------
@@ -694,6 +902,147 @@ class PluginManager(QObject):
         except Exception as e:
             self._record_plugin_error(plugin_id, f"register_hotkey '{hotkey_str}': {e}")
             return False
+
+    # ------------------------------------------------------------------
+    # Cross-Plugin & Host Service Bus
+    # ------------------------------------------------------------------
+    def register_service(
+        self,
+        provider_id: str,
+        service_name: str,
+        actions: Dict[str, Callable[..., Any]],
+        scope_map: Optional[Dict[str, str]] = None,
+        policy: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        sname = str(service_name or "").strip().lower()
+        if not sname or not isinstance(actions, dict):
+            return False
+        self._services[sname] = {
+            "provider_id": provider_id,
+            "actions": dict(actions),
+            "scope_map": dict(scope_map or {}),
+            "policy": dict(policy or {}),
+        }
+        self.services_changed.emit()
+        return True
+
+    def unregister_service(self, provider_id: str, service_name: Optional[str] = None) -> None:
+        removed = False
+        for sname in list(self._services.keys()):
+            if self._services[sname].get("provider_id") == provider_id:
+                if service_name is None or sname == str(service_name).strip().lower():
+                    self._services.pop(sname, None)
+                    removed = True
+        if removed:
+            self.services_changed.emit()
+
+    def set_service_policy(self, provider_id: str, service_name: str, policy: Dict[str, Any]) -> bool:
+        sname = str(service_name or "").strip().lower()
+        svc = self._services.get(sname)
+        if not svc or svc.get("provider_id") != provider_id:
+            return False
+        svc["policy"] = dict(policy or {})
+        return True
+
+    def get_service_policy(self, service_name: str) -> Dict[str, Any]:
+        svc = self._services.get(str(service_name or "").strip().lower())
+        return dict(svc.get("policy", {})) if svc else {}
+
+    def list_services(self) -> List[Dict[str, Any]]:
+        return [
+            {
+                "service": sname,
+                "provider_id": svc["provider_id"],
+                "actions": sorted(svc["actions"].keys()),
+                "scopes": dict(svc["scope_map"]),
+            }
+            for sname, svc in self._services.items()
+        ]
+
+    def _resolve_service_name(self, service_name: str) -> Optional[str]:
+        sname = str(service_name or "").strip().lower()
+        if sname in self._services:
+            return sname
+        if sname == "loyalty":
+            for candidate in ("streamelements", "streamlabs"):
+                if candidate in self._services:
+                    return candidate
+        return None
+
+    def call_service(self, caller_id: str, service_name: str, action: str, **kwargs: Any) -> Dict[str, Any]:
+        resolved = self._resolve_service_name(service_name)
+        if not resolved:
+            return {"ok": False, "error": f"Service '{service_name}' is not available or not loaded."}
+        svc = self._services[resolved]
+        handler = svc["actions"].get(action)
+        if not handler:
+            return {"ok": False, "error": f"Unknown action '{action}' on service '{resolved}'."}
+
+        provider_id = svc["provider_id"]
+        required_scope = svc["scope_map"].get(action)
+        is_host = caller_id == "__host__"
+        is_self = caller_id == provider_id
+
+        if not is_host and not is_self:
+            caller_info = self._registry.get(caller_id)
+            caller_perms = set(caller_info["manifest"].get("permissions", [])) if caller_info else set()
+            if required_scope and required_scope not in caller_perms:
+                self._notify_service_audit(svc, caller_id, action, required_scope, False, "Missing manifest permission", kwargs)
+                return {"ok": False, "error": f"Plugin '{caller_id}' lacks manifest permission '{required_scope}'."}
+
+            policy = svc.get("policy", {})
+            allowed_scopes = policy.get("allowed_scopes", {})
+            if required_scope and allowed_scopes and not allowed_scopes.get(required_scope, False):
+                self._notify_service_audit(svc, caller_id, action, required_scope, False, "Blocked by provider scope policy", kwargs)
+                return {"ok": False, "error": f"'{required_scope}' access is disabled in {resolved} permissions."}
+
+            overrides = policy.get("plugin_overrides", {})
+            if caller_id in overrides:
+                ov_cfg = overrides[caller_id]
+                if not ov_cfg.get("enabled", True):
+                    self._notify_service_audit(svc, caller_id, action, required_scope or "", False, "Plugin blocked by user", kwargs)
+                    return {"ok": False, "error": f"Plugin '{caller_id}' is blocked by {resolved} access control."}
+                ov_scopes = ov_cfg.get("scopes", {})
+                if required_scope and required_scope in ov_scopes and not ov_scopes[required_scope]:
+                    self._notify_service_audit(svc, caller_id, action, required_scope, False, "Scope denied for plugin", kwargs)
+                    return {"ok": False, "error": f"Scope '{required_scope}' denied for '{caller_id}'."}
+
+        try:
+            res = handler(caller_id=caller_id, **kwargs)
+            self._notify_service_audit(svc, caller_id, action, required_scope or "open", True, "OK", kwargs)
+            if isinstance(res, dict) and "ok" in res:
+                return res
+            return {"ok": True, "data": res}
+        except Exception as e:
+            self._record_plugin_error(provider_id, f"service '{resolved}.{action}': {e}")
+            return {"ok": False, "error": str(e)}
+
+    def _notify_service_audit(
+        self,
+        svc: Dict[str, Any],
+        caller_id: str,
+        action: str,
+        scope: str,
+        allowed: bool,
+        reason: str,
+        kwargs: Dict[str, Any],
+    ) -> None:
+        audit_cb = svc.get("policy", {}).get("_audit_cb")
+        if callable(audit_cb):
+            try:
+                audit_cb({
+                    "caller_id": caller_id,
+                    "action": action,
+                    "scope": scope,
+                    "allowed": allowed,
+                    "reason": reason,
+                    "params": dict(kwargs),
+                })
+            except Exception:
+                pass
+
+    def call_service_as_host(self, service_name: str, action: str, **kwargs: Any) -> Dict[str, Any]:
+        return self.call_service("__host__", service_name, action, **kwargs)
 
     def stop(self):
         for pid in list(self._registry.keys()):

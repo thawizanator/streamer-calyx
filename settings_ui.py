@@ -2659,6 +2659,8 @@ class SettingsWindow(QWidget):
         info = self._dynamic_plugins.get(plugin_id)
         if info:
             self.set_view_index(info["page_idx"])
+        else:
+            self.set_view_index(16)
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
