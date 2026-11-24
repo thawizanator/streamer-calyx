@@ -301,7 +301,7 @@ class PluginsTab(QWidget):
             chk.toggled.connect(lambda val, pid=p["id"]: self.manager.set_plugin_enabled(pid, val))
             top.addWidget(chk, 1)
 
-            badge = QLabel("CORE" if p["builtin"] else "3RD PARTY")
+            badge = QLabel("CORE" if p.get("is_core", p["builtin"]) else "3RD PARTY")
             badge.setStyleSheet(
                 "font-size: 10px; font-weight: bold; padding: 2px 6px; border-radius: 4px; "
                 "background: rgba(56, 189, 248, 0.18); color: #38bdf8;"

@@ -782,6 +782,7 @@ class PluginManager(QObject):
         return True, f"Uninstalled '{plugin_id}'."
 
     def list_plugins(self) -> List[Dict[str, Any]]:
+        core_ids = {c["id"] for c in self._remote_catalog}
         out = []
         for pid, info in self._registry.items():
             m = info["manifest"]
@@ -795,6 +796,7 @@ class PluginManager(QObject):
                 "icon": m.get("icon", "🧩"),
                 "permissions": m.get("permissions", []),
                 "builtin": info["builtin"],
+                "is_core": bool(info["builtin"] or pid in core_ids),
                 "enabled": info["enabled"],
                 "loaded": info["instance"] is not None,
                 "error": self._errors.get(pid, ""),
